@@ -36,7 +36,7 @@ import { GlobalFileNames } from "../../shared/globalFileNames"
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
 
 import { fileExistsAtPath } from "../../utils/fs"
-import { TOKEN_EXPIRY_BUFFER_MS } from "./constants"
+import { TOKEN_EXPIRY_BUFFER_MS, OAUTH_FLOW_TIMEOUT_MS } from "./constants"
 import { SecretStorageService } from "./SecretStorageService"
 import { McpOAuthClientProvider } from "./McpOAuthClientProvider"
 import { arePathsEqual, getWorkspacePath } from "../../utils/path"
@@ -1064,37 +1064,162 @@ export class McpHub {
 			return
 		}
 
-		// Show a confirmation toast so the user can decide whether to authenticate.
-		const choice = await vscode.window.showInformationMessage(
-			`MCP server "${name}" requires authentication.`,
-			"Authenticate",
+		// Show a persistent progress notification for the duration of the OAuth flow.
+		// Inside, a looping showInformationMessage gives the user an "Authenticate"
+		// button that reappears if dismissed, so they can trigger browser auth at any time.
+		await vscode.window.withProgress(
+			{
+				location: vscode.ProgressLocation.Notification,
+				title: t("mcp:oauth.flow.authenticating", { name }),
+				cancellable: true,
+			},
+			(progress, cancellationToken) =>
+				this._runOAuthFlowWithProgress(
+					name,
+					source,
+					config,
+					serverUrl,
+					authProvider,
+					transport,
+					connection,
+					progress,
+					cancellationToken,
+				),
 		)
+	}
 
-		if (choice === "Authenticate") {
-			// Check tokens again — another window may have authed while toast was showing
-			const tokens = await this.secretStorage.getOAuthData(serverUrl)
-			if (tokens && Date.now() < tokens.expires_at - TOKEN_EXPIRY_BUFFER_MS) {
-				await authProvider.close()
-				await this.deleteConnection(name, source)
-				await this.connectToServer(name, config, source)
-				await this.notifyWebviewOfServerChanges()
-				return
-			}
-			await this._completeOAuthFlow(authProvider, transport, connection, name, source)
-		} else {
-			// Toast was dismissed or auto-timed-out.
-			const tokens = await this.secretStorage.getOAuthData(serverUrl)
-			if (tokens && Date.now() < tokens.expires_at - TOKEN_EXPIRY_BUFFER_MS) {
-				await authProvider.close()
-				await this.deleteConnection(name, source)
-				await this.connectToServer(name, config, source)
-				await this.notifyWebviewOfServerChanges()
-				return
-			}
-			// Tokens not available yet — start watching for them
-			await authProvider.close()
-			this._watchForOAuthTokens(name, source, serverUrl, config)
+	private _runOAuthFlowWithProgress(
+		name: string,
+		source: "global" | "project",
+		config: z.infer<typeof ServerConfigSchema>,
+		serverUrl: string,
+		authProvider: McpOAuthClientProvider,
+		transport: StreamableHTTPClientTransport,
+		connection: ConnectedMcpConnection,
+		progress: vscode.Progress<{ message?: string; increment?: number }>,
+		cancellationToken: vscode.CancellationToken,
+	): Promise<void> {
+		const watcherKey = `${name}:${source}`
+
+		// Cancel any existing watcher for this connection before starting a new one
+		const existing = this._oauthWatchers.get(watcherKey)
+		if (existing) {
+			existing.unsubscribe()
+			clearTimeout(existing.abortHandle)
+			this._oauthWatchers.delete(watcherKey)
 		}
+
+		return new Promise<void>((resolve) => {
+			let disposed = false
+
+			const cleanup = () => {
+				if (disposed) return
+				disposed = true
+				clearTimeout(timeoutHandle)
+				unsubscribe()
+				this._oauthWatchers.delete(watcherKey)
+			}
+
+			// --- Cross-window token watcher ---
+			const onTokensChanged = async () => {
+				if (disposed || this.isDisposed) return
+				try {
+					const data = await this.secretStorage?.getOAuthData(serverUrl)
+					if (data && Date.now() < data.expires_at - TOKEN_EXPIRY_BUFFER_MS) {
+						cleanup()
+						await authProvider.close()
+						await this.deleteConnection(name, source)
+						const validatedConfig = this.validateServerConfig(config, name)
+						await this.connectToServer(name, validatedConfig, source)
+						await this.notifyWebviewOfServerChanges()
+						resolve()
+					}
+				} catch (err) {
+					console.error(`[McpHub] OAuth token watcher failed for "${name}":`, err)
+				}
+			}
+
+			const unsubscribe = this.secretStorage!.onDidChange(serverUrl, () => {
+				void onTokensChanged()
+			})
+
+			// --- Cancellation ---
+			cancellationToken.onCancellationRequested(() => {
+				cleanup()
+				void authProvider.close()
+				const conn = this.findConnection(name, source)
+				if (conn && conn.server.status !== "connected") {
+					conn.server.status = "disconnected"
+					this.appendErrorMessage(conn, t("mcp:oauth.flow.cancelled"))
+					void this.notifyWebviewOfServerChanges()
+				}
+				resolve()
+			})
+
+			// --- Timeout ---
+			const timeoutHandle = setTimeout(() => {
+				if (disposed) return
+				cleanup()
+				void authProvider.close()
+				const conn = this.findConnection(name, source)
+				if (conn && conn.server.status === "connecting") {
+					conn.server.status = "disconnected"
+					this.appendErrorMessage(conn, t("mcp:oauth.flow.timedOut"))
+					void this.notifyWebviewOfServerChanges()
+				}
+				resolve()
+			}, OAUTH_FLOW_TIMEOUT_MS)
+
+			// Register in _oauthWatchers so deleteConnection() and dispose() can clean up
+			this._oauthWatchers.set(watcherKey, { unsubscribe, abortHandle: timeoutHandle })
+
+			const authenticateLabel = t("mcp:oauth.flow.authenticateButton")
+			// --- Looping "Authenticate" toast ---
+			const showAuthPromptLoop = async () => {
+				while (!disposed) {
+					progress.report({ message: t("mcp:oauth.flow.waitingForBrowser") })
+
+					const choice = await vscode.window.showInformationMessage(
+						t("mcp:oauth.flow.clickAuthenticate", { name }),
+						authenticateLabel,
+					)
+
+					if (disposed) return
+
+					if (choice === authenticateLabel) {
+						// Guard: another window may have authed while the toast was showing
+						const tokens = await this.secretStorage!.getOAuthData(serverUrl)
+						if (tokens && Date.now() < tokens.expires_at - TOKEN_EXPIRY_BUFFER_MS) {
+							cleanup()
+							await authProvider.close()
+							await this.deleteConnection(name, source)
+							const validatedFastPathConfig = this.validateServerConfig(config, name)
+							await this.connectToServer(name, validatedFastPathConfig, source)
+							await this.notifyWebviewOfServerChanges()
+							resolve()
+							return
+						}
+
+						progress.report({ message: t("mcp:oauth.flow.waitingForBrowser") })
+						try {
+							await this._completeOAuthFlow(authProvider, transport, connection, name, source)
+						} catch {
+							// _completeOAuthFlow handles its own error state
+						}
+						cleanup()
+						resolve()
+						return
+					}
+
+					// Toast was dismissed or auto-timed-out — wait briefly then re-show
+					if (!disposed) {
+						await delay(3000)
+					}
+				}
+			}
+
+			void showAuthPromptLoop()
+		})
 	}
 
 	private async _completeOAuthFlow(
@@ -1130,9 +1255,7 @@ export class McpHub {
 			await this.connectToServer(name, validatedConfig, source)
 
 			await this.notifyWebviewOfServerChanges()
-			void vscode.window.showInformationMessage(
-				`MCP server "${name}" connected successfully after OAuth authentication.`,
-			)
+			void vscode.window.showInformationMessage(t("mcp:oauth.flow.connected", { name }))
 		} catch (error) {
 			await authProvider.close()
 			const conn = this.findConnection(name, source)
@@ -1142,80 +1265,6 @@ export class McpHub {
 			}
 			await this.notifyWebviewOfServerChanges()
 		}
-	}
-
-	private _watchForOAuthTokens(
-		name: string,
-		source: "global" | "project",
-		serverUrl: string,
-		config: z.infer<typeof ServerConfigSchema>,
-	): void {
-		if (!this.secretStorage) return
-
-		const watcherKey = `${name}:${source}`
-
-		// Cancel any existing watcher for this connection before starting a new one
-		const existing = this._oauthWatchers.get(watcherKey)
-		if (existing) {
-			existing.unsubscribe()
-			clearTimeout(existing.abortHandle)
-			this._oauthWatchers.delete(watcherKey)
-		}
-
-		// Called when SecretStorage fires onDidChange for this server's key.
-		// Runs in all VS Code windows the instant tokens are saved — no polling delay.
-		const onTokensChanged = async () => {
-			try {
-				if (this.isDisposed) return
-
-				const conn = this.findConnection(name, source)
-				if (!conn || conn.server.status === "connected") {
-					cleanup()
-					return
-				}
-
-				const data = await this.secretStorage?.getOAuthData(serverUrl)
-				if (data && Date.now() < data.expires_at - TOKEN_EXPIRY_BUFFER_MS) {
-					cleanup()
-					await this.deleteConnection(name, source)
-					const validatedConfig = this.validateServerConfig(config, name)
-					await this.connectToServer(name, validatedConfig, source)
-					await this.notifyWebviewOfServerChanges()
-				}
-				// If tokens aren't valid yet (e.g. a delete event fired), keep listening.
-			} catch (err) {
-				console.error(`[McpHub] OAuth token watcher failed for "${name}":`, err)
-			}
-		}
-
-		const cleanup = () => {
-			const entry = this._oauthWatchers.get(watcherKey)
-			if (entry) {
-				entry.unsubscribe()
-				clearTimeout(entry.abortHandle)
-				this._oauthWatchers.delete(watcherKey)
-			}
-		}
-
-		const unsubscribe = this.secretStorage.onDidChange(serverUrl, () => {
-			void onTokensChanged()
-		})
-
-		// Give up after 6 minutes if no token ever arrives
-		const abortHandle = setTimeout(
-			() => {
-				cleanup()
-				const conn = this.findConnection(name, source)
-				if (conn && conn.server.status === "connecting") {
-					conn.server.status = "disconnected"
-					this.appendErrorMessage(conn, "OAuth authentication timed out waiting for another window")
-					void this.notifyWebviewOfServerChanges()
-				}
-			},
-			6 * 60 * 1000,
-		)
-
-		this._oauthWatchers.set(watcherKey, { unsubscribe, abortHandle })
 	}
 
 	private appendErrorMessage(connection: McpConnection, error: string, level: "error" | "warn" | "info" = "error") {

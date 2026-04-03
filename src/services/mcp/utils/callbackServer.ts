@@ -1,5 +1,6 @@
 import * as http from "http"
 import { t } from "../../../i18n"
+import { OAUTH_FLOW_TIMEOUT_MS } from "../constants"
 
 export interface CallbackResult {
 	code?: string
@@ -49,16 +50,13 @@ export function startCallbackServer(
 			const resultPromise = new Promise<CallbackResult>((resolveResult, rejectResult) => {
 				let resolved = false
 
-				const timeout = setTimeout(
-					() => {
-						if (!resolved) {
-							resolved = true
-							rejectResult(new Error("Callback timeout"))
-							server.close()
-						}
-					},
-					5 * 60 * 1000,
-				) // 5 minutes
+				const timeout = setTimeout(() => {
+					if (!resolved) {
+						resolved = true
+						rejectResult(new Error("Callback timeout"))
+						server.close()
+					}
+				}, OAUTH_FLOW_TIMEOUT_MS)
 
 				server.on("request", (req: any, res: any) => {
 					if (resolved) return

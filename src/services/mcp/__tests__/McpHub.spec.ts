@@ -7,6 +7,8 @@ import type { ClineProvider } from "../../../core/webview/ClineProvider"
 
 import type { McpHub as McpHubType, McpConnection, ConnectedMcpConnection, DisconnectedMcpConnection } from "../McpHub"
 import { ServerConfigSchema, McpHub } from "../McpHub"
+import { OAUTH_FLOW_TIMEOUT_MS } from "../constants"
+import { t } from "../../../i18n"
 
 // Mock fs/promises before importing anything that uses it
 vi.mock("fs/promises", () => ({
@@ -49,6 +51,8 @@ vi.mock("../../../utils/safeWriteJson", () => ({
 	}),
 }))
 
+vi.mock("delay", () => ({ default: vi.fn().mockResolvedValue(undefined) }))
+
 vi.mock("vscode", () => ({
 	workspace: {
 		createFileSystemWatcher: vi.fn().mockReturnValue({
@@ -68,6 +72,22 @@ vi.mock("vscode", () => ({
 		createTextEditorDecorationType: vi.fn().mockReturnValue({
 			dispose: vi.fn(),
 		}),
+		withProgress: vi.fn().mockImplementation((_options: any, task: any) => {
+			const progress = { report: vi.fn() }
+			const tokenListeners: Array<() => void> = []
+			const cancellationToken = {
+				isCancellationRequested: false,
+				onCancellationRequested: vi.fn((cb: () => void) => {
+					tokenListeners.push(cb)
+					return { dispose: vi.fn() }
+				}),
+				_fire: () => tokenListeners.forEach((cb) => cb()),
+			}
+			return task(progress, cancellationToken)
+		}),
+	},
+	ProgressLocation: {
+		Notification: 15,
 	},
 	Disposable: {
 		from: vi.fn(),
@@ -2366,6 +2386,248 @@ describe("McpHub", () => {
 					args: ["/c", "echo", "test"],
 				}),
 			)
+		})
+	})
+
+	describe("_initiateOAuthFlow with persistent notification", () => {
+		const serverName = "oauth-server"
+		const serverUrl = "https://example.com/mcp"
+		const source = "global" as const
+		const config = { url: serverUrl }
+
+		let mockAuthProvider: any
+		let mockTransport: any
+		let mockConnection: any
+		let mockSecretStorage: any
+		let vsc: any
+
+		beforeEach(async () => {
+			vi.clearAllMocks()
+			vsc = await import("vscode")
+
+			mockAuthProvider = {
+				openBrowser: vi.fn().mockResolvedValue(undefined),
+				waitForAuthCode: vi.fn().mockResolvedValue("auth-code-123"),
+				exchangeCodeForTokens: vi.fn().mockResolvedValue(undefined),
+				close: vi.fn().mockResolvedValue(undefined),
+			}
+
+			mockTransport = {}
+
+			mockConnection = {
+				server: {
+					status: "connecting",
+					config: JSON.stringify(config),
+					name: serverName,
+				},
+			}
+
+			mockSecretStorage = {
+				getOAuthData: vi.fn().mockResolvedValue(null),
+				onDidChange: vi.fn().mockReturnValue(vi.fn()),
+			}
+			;(mcpHub as any).secretStorage = mockSecretStorage
+
+			vi.spyOn(mcpHub as any, "deleteConnection").mockResolvedValue(undefined)
+			vi.spyOn(mcpHub as any, "connectToServer").mockResolvedValue(undefined)
+			vi.spyOn(mcpHub as any, "notifyWebviewOfServerChanges").mockResolvedValue(undefined)
+			vi.spyOn(mcpHub as any, "findConnection").mockReturnValue(mockConnection)
+			vi.spyOn(mcpHub as any, "validateServerConfig").mockReturnValue(config)
+			vi.spyOn(mcpHub as any, "appendErrorMessage").mockReturnValue(undefined)
+		})
+
+		afterEach(() => {
+			vi.useRealTimers()
+		})
+
+		it("should use withProgress for persistent notification", async () => {
+			vsc.window.showInformationMessage.mockResolvedValueOnce(t("mcp:oauth.flow.authenticateButton") as any)
+			vi.spyOn(mcpHub as any, "_completeOAuthFlow").mockResolvedValue(undefined)
+
+			await (mcpHub as any)._initiateOAuthFlow(
+				serverName,
+				source,
+				config,
+				mockAuthProvider,
+				mockTransport,
+				mockConnection,
+			)
+
+			expect(vsc.window.withProgress).toHaveBeenCalledWith(
+				expect.objectContaining({
+					location: vsc.ProgressLocation.Notification,
+					cancellable: true,
+				}),
+				expect.any(Function),
+			)
+		})
+
+		it("should re-show toast when dismissed and complete on second attempt", async () => {
+			// First toast dismissed (undefined), second toast user clicks Authenticate
+			vsc.window.showInformationMessage
+				.mockResolvedValueOnce(undefined as any)
+				.mockResolvedValueOnce(t("mcp:oauth.flow.authenticateButton") as any)
+
+			vi.spyOn(mcpHub as any, "_completeOAuthFlow").mockResolvedValue(undefined)
+
+			await (mcpHub as any)._initiateOAuthFlow(
+				serverName,
+				source,
+				config,
+				mockAuthProvider,
+				mockTransport,
+				mockConnection,
+			)
+
+			expect(vsc.window.showInformationMessage).toHaveBeenCalledTimes(2)
+		})
+
+		it("should resolve when cross-window tokens arrive", async () => {
+			vsc.window.showInformationMessage.mockImplementation(() => new Promise(() => {}))
+
+			mockSecretStorage.onDidChange.mockImplementation((_key: string, cb: () => void) => {
+				Promise.resolve().then(() => {
+					mockSecretStorage.getOAuthData.mockResolvedValue({
+						expires_at: Date.now() + 10 * 60 * 1000,
+					})
+					cb()
+				})
+				return vi.fn()
+			})
+
+			await (mcpHub as any)._initiateOAuthFlow(
+				serverName,
+				source,
+				config,
+				mockAuthProvider,
+				mockTransport,
+				mockConnection,
+			)
+
+			expect(mockAuthProvider.close).toHaveBeenCalled()
+			expect((mcpHub as any).deleteConnection).toHaveBeenCalledWith(serverName, source)
+			expect((mcpHub as any).connectToServer).toHaveBeenCalled()
+		})
+
+		it("should skip flow when valid tokens already exist", async () => {
+			mockSecretStorage.getOAuthData.mockResolvedValue({
+				expires_at: Date.now() + 10 * 60 * 1000,
+			})
+
+			await (mcpHub as any)._initiateOAuthFlow(
+				serverName,
+				source,
+				config,
+				mockAuthProvider,
+				mockTransport,
+				mockConnection,
+			)
+
+			expect(vsc.window.withProgress).not.toHaveBeenCalled()
+			expect(mockAuthProvider.close).toHaveBeenCalled()
+			expect((mcpHub as any).deleteConnection).toHaveBeenCalledWith(serverName, source)
+			expect((mcpHub as any).connectToServer).toHaveBeenCalled()
+		})
+
+		it("should disconnect and flag error when user cancels the OAuth flow", async () => {
+			vsc.window.showInformationMessage.mockImplementation(() => new Promise(() => {}))
+
+			// Override withProgress for this test to capture the cancellation token
+			let capturedCancellationToken: any
+			vsc.window.withProgress.mockImplementationOnce((_options: any, task: any) => {
+				const progress = { report: vi.fn() }
+				const tokenListeners: Array<() => void> = []
+				capturedCancellationToken = {
+					isCancellationRequested: false,
+					onCancellationRequested: vi.fn((cb: () => void) => {
+						tokenListeners.push(cb)
+						return { dispose: vi.fn() }
+					}),
+					_fire: () => tokenListeners.forEach((cb) => cb()),
+				}
+				return task(progress, capturedCancellationToken)
+			})
+
+			const flowPromise = (mcpHub as any)._initiateOAuthFlow(
+				serverName,
+				source,
+				config,
+				mockAuthProvider,
+				mockTransport,
+				mockConnection,
+			)
+
+			// _initiateOAuthFlow awaits getOAuthData() before calling withProgress.
+			// Flush that microtask so withProgress runs and capturedCancellationToken is set.
+			await Promise.resolve()
+			capturedCancellationToken._fire()
+
+			await flowPromise
+
+			expect(mockConnection.server.status).toBe("disconnected")
+			expect((mcpHub as any).appendErrorMessage).toHaveBeenCalled()
+			expect(mockAuthProvider.close).toHaveBeenCalled()
+		})
+
+		it("should disconnect and flag error when OAuth flow times out", async () => {
+			vi.useFakeTimers()
+			vsc.window.showInformationMessage.mockImplementation(() => new Promise(() => {}))
+
+			const flowPromise = (mcpHub as any)._initiateOAuthFlow(
+				serverName,
+				source,
+				config,
+				mockAuthProvider,
+				mockTransport,
+				mockConnection,
+			)
+
+			await vi.advanceTimersByTimeAsync(OAUTH_FLOW_TIMEOUT_MS)
+			await flowPromise
+
+			expect(mockConnection.server.status).toBe("disconnected")
+			expect((mcpHub as any).appendErrorMessage).toHaveBeenCalled()
+			expect(mockAuthProvider.close).toHaveBeenCalled()
+		})
+
+		it("should resolve without calling _completeOAuthFlow when tokens exist at click time", async () => {
+			// Tokens are present when Authenticate is clicked (cross-window guard in the loop)
+			vsc.window.showInformationMessage.mockResolvedValueOnce(t("mcp:oauth.flow.authenticateButton") as any)
+			mockSecretStorage.getOAuthData.mockResolvedValue({
+				expires_at: Date.now() + 10 * 60 * 1000,
+			})
+
+			const completeOAuthSpy = vi.spyOn(mcpHub as any, "_completeOAuthFlow")
+
+			await (mcpHub as any)._initiateOAuthFlow(
+				serverName,
+				source,
+				config,
+				mockAuthProvider,
+				mockTransport,
+				mockConnection,
+			)
+
+			expect(completeOAuthSpy).not.toHaveBeenCalled()
+			expect(mockAuthProvider.close).toHaveBeenCalled()
+			expect((mcpHub as any).deleteConnection).toHaveBeenCalledWith(serverName, source)
+			expect((mcpHub as any).connectToServer).toHaveBeenCalled()
+		})
+
+		it("should resolve cleanly even when _completeOAuthFlow throws", async () => {
+			vsc.window.showInformationMessage.mockResolvedValueOnce(t("mcp:oauth.flow.authenticateButton") as any)
+			vi.spyOn(mcpHub as any, "_completeOAuthFlow").mockRejectedValue(new Error("network failure"))
+
+			await expect(
+				(mcpHub as any)._initiateOAuthFlow(
+					serverName,
+					source,
+					config,
+					mockAuthProvider,
+					mockTransport,
+					mockConnection,
+				),
+			).resolves.toBeUndefined()
 		})
 	})
 })
