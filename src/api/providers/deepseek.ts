@@ -30,7 +30,7 @@ const supportsDeepSeekThinkingToggle = (modelId: string) => deepSeekV4ThinkingMo
 // Only known V4 models and the legacy reasoner alias support DeepSeek's
 // thinking fields. Custom model IDs still fall back to default metadata, but
 // should not receive V4-only request parameters.
-const isDeepSeekThinkingEnabled = (modelId: string, options: ApiHandlerOptions, reasoningEffort?: string) => {
+const isDeepSeekThinkingEnabled = (modelId: string, options: ApiHandlerOptions) => {
 	if (options.enableReasoningEffort === false || options.reasoningEffort === "disable") {
 		return false
 	}
@@ -93,7 +93,7 @@ export class DeepSeekHandler extends OpenAiHandler {
 		const modelId = this.options.apiModelId ?? deepSeekDefaultModelId
 		const { info: modelInfo, temperature, reasoningEffort, maxTokens } = this.getModel()
 
-		const isThinkingModel = isDeepSeekThinkingEnabled(modelId, this.options, reasoningEffort)
+		const isThinkingModel = isDeepSeekThinkingEnabled(modelId, this.options)
 		const thinking = supportsDeepSeekThinkingToggle(modelId)
 			? ({ type: isThinkingModel ? "enabled" : "disabled" } as const)
 			: isThinkingModel
