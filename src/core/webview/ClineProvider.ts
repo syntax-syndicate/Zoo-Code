@@ -1696,7 +1696,18 @@ export class ClineProvider
 		// must explicitly select Zoo Gateway in settings if they want to use it.
 		try {
 			const { apiConfiguration } = await this.getState()
-			const profileName = "Zoo Gateway"
+			const currentSettings = this.contextProxy.getProviderSettings()
+			const currentApiConfigName = this.contextProxy.getValues().currentApiConfigName
+
+			// Check if Zoo Gateway is the currently active profile by apiProvider identity,
+			// not by profile name (profile names are user-renameable).
+			const isZooGatewayActive = currentSettings.apiProvider === "zoo-gateway"
+
+			// If Zoo Gateway is currently active, write to the actual active profile name
+			// (which may have been renamed by the user). Otherwise fall back to the default
+			// "Zoo Gateway" name to create or update the canonical default profile.
+			const profileName = isZooGatewayActive && currentApiConfigName ? currentApiConfigName : "Zoo Gateway"
+
 			const newConfiguration: ProviderSettings = {
 				...apiConfiguration,
 				apiProvider: "zoo-gateway",
@@ -1704,11 +1715,6 @@ export class ClineProvider
 				zooGatewayModelId: apiConfiguration.zooGatewayModelId,
 				zooGatewayBaseUrl: apiConfiguration.zooGatewayBaseUrl,
 			}
-
-			// Check if Zoo Gateway is the currently active profile by apiProvider identity,
-			// not by profile name (profile names are user-renameable).
-			const currentSettings = this.contextProxy.getProviderSettings()
-			const isZooGatewayActive = currentSettings.apiProvider === "zoo-gateway"
 
 			await this.upsertProviderProfile(profileName, newConfiguration, isZooGatewayActive)
 		} catch (error) {
