@@ -896,6 +896,33 @@ export class ClineProvider
 		if (!currentTask || currentTask.abandoned || currentTask.abort) {
 			await this.removeClineFromStack()
 		}
+
+		// Ensure zoo-gateway profile is seeded for users who signed in before this feature existed.
+		// Without this, users with a valid cached token but no zoo-gateway profile would need to
+		// re-authenticate to use Zoo Gateway. Fire-and-forget to avoid blocking webview init.
+		void this.ensureZooGatewayProfileSeeded().catch((err) => {
+			this.log(`[ensureZooGatewayProfileSeeded] Error: ${err instanceof Error ? err.message : String(err)}`)
+		})
+	}
+
+	/**
+	 * Seeds the zoo-gateway provider profile for users who have a cached auth token
+	 * but no profile (e.g., users who signed in before Zoo Gateway was added).
+	 * Called once per webview init; handleZooCodeCallback is idempotent so repeated calls are safe.
+	 */
+	private async ensureZooGatewayProfileSeeded(): Promise<void> {
+		const { getCachedZooCodeToken } = await import("../../services/zoo-code-auth")
+		const token = getCachedZooCodeToken()
+		if (!token) return
+
+		// Check if any zoo-gateway profile already exists
+		const allProfiles = await this.providerSettingsManager.listConfig()
+		const hasZooGatewayProfile = allProfiles.some((p) => p.apiProvider === "zoo-gateway")
+		if (hasZooGatewayProfile) return
+
+		// User has token but no profile — seed it via the same path as fresh auth
+		this.log("[ensureZooGatewayProfileSeeded] Seeding zoo-gateway profile for existing auth token")
+		await this.handleZooCodeCallback(token)
 	}
 
 	public async createTaskWithHistoryItem(
