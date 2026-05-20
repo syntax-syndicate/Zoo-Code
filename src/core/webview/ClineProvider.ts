@@ -1765,42 +1765,41 @@ export class ClineProvider
 			// not by profile name (profile names are user-renameable).
 			const isZooGatewayActive = currentSettings.apiProvider === "zoo-gateway"
 
-			if (isZooGatewayActive && currentApiConfigName) {
-				// Zoo Gateway is active: write to the actual active profile name (may have been renamed).
+			// Always scan ALL profiles and update every zoo-gateway profile with the new token.
+			// This ensures renamed profiles, duplicate profiles, and inactive profiles all stay
+			// in sync. The model lookup in requestRouterModels uses .find() which returns the
+			// first zoo-gateway profile it finds — if that profile has a stale token, requests fail.
+			const allProfiles = await this.providerSettingsManager.listConfig()
+			const zooProfiles = allProfiles.filter((p) => p.apiProvider === "zoo-gateway")
+
+			if (zooProfiles.length === 0) {
+				// No existing zoo-gateway profile — create the canonical default.
 				const newConfiguration: ProviderSettings = {
-					...apiConfiguration,
 					apiProvider: "zoo-gateway",
 					zooSessionToken: token,
 					zooGatewayModelId: apiConfiguration.zooGatewayModelId,
 					zooGatewayBaseUrl: derivedGatewayBaseUrl,
 				}
-				await this.upsertProviderProfile(currentApiConfigName, newConfiguration, true)
+				// Activate only if zoo-gateway was the active provider (shouldn't happen if
+				// no profiles exist, but defensive).
+				await this.upsertProviderProfile("Zoo Gateway", newConfiguration, isZooGatewayActive)
 			} else {
-				// Zoo Gateway is not active. Scan all profiles and update every zoo-gateway profile
-				// so renamed profiles also get the fresh token. Only create "Zoo Gateway" if
-				// no zoo-gateway profile exists yet.
-				const allProfiles = await this.providerSettingsManager.listConfig()
-				const zooProfiles = allProfiles.filter((p) => p.apiProvider === "zoo-gateway")
-
-				if (zooProfiles.length === 0) {
-					// No existing zoo-gateway profile — create the canonical default.
-					const newConfiguration: ProviderSettings = {
-						apiProvider: "zoo-gateway",
+				// Update every existing zoo-gateway profile with the new token and the
+				// derived base URL so that environment-specific routing stays consistent.
+				for (const entry of zooProfiles) {
+					const isActiveProfile = isZooGatewayActive && entry.name === currentApiConfigName
+					const existing = await this.providerSettingsManager.getProfile({ name: entry.name })
+					const updated: ProviderSettings = {
+						...existing,
 						zooSessionToken: token,
-						zooGatewayModelId: apiConfiguration.zooGatewayModelId,
 						zooGatewayBaseUrl: derivedGatewayBaseUrl,
 					}
-					await this.upsertProviderProfile("Zoo Gateway", newConfiguration, false)
-				} else {
-					// Update every existing zoo-gateway profile with the new token and the
-					// derived base URL so that environment-specific routing stays consistent.
-					for (const entry of zooProfiles) {
-						const existing = await this.providerSettingsManager.getProfile({ name: entry.name })
-						const updated: ProviderSettings = {
-							...existing,
-							zooSessionToken: token,
-							zooGatewayBaseUrl: derivedGatewayBaseUrl,
-						}
+					if (isActiveProfile) {
+						// Use upsertProviderProfile with activate: true so the in-memory handler
+						// picks up the new token immediately for the current task.
+						await this.upsertProviderProfile(entry.name, updated, true)
+					} else {
+						// Non-active profiles just need the token saved to disk.
 						await this.providerSettingsManager.saveConfig(entry.name, updated)
 					}
 				}
