@@ -875,36 +875,43 @@ export class ClineProvider
 		const token = getCachedZooCodeToken()
 		if (!token) return
 
-		// Check if a zoo-gateway profile exists AND has the CURRENT token. A profile may exist but:
-		// - be empty (imported settings without credentials)
-		// - have a stale token (user re-authenticated while no provider instance was open)
-		// In either case, we need to write the fresh token.
+		// Check ALL zoo-gateway profiles — only skip seeding if every profile has the current token.
+		// Using .find() would miss stale tokens in duplicate/renamed profiles since handleZooCodeCallback
+		// uses .filter() and updates all of them — the early-return guard must match.
 		const allProfiles = await this.providerSettingsManager.listConfig()
-		const zooGatewayProfile = allProfiles.find((p) => p.apiProvider === "zoo-gateway")
+		const zooGatewayProfiles = allProfiles.filter((p) => p.apiProvider === "zoo-gateway")
 
-		if (zooGatewayProfile) {
-			// Profile exists — check if it has the CURRENT token (not just any token)
-			try {
-				const fullProfile = await this.providerSettingsManager.getProfile({ name: zooGatewayProfile.name })
-				if (fullProfile.zooSessionToken === token) {
-					// Profile exists and has the current token — nothing to do
-					return
-				}
-				// Token mismatch or missing — log and proceed to update
-				this.log(
-					fullProfile.zooSessionToken
-						? "[ensureZooGatewayProfileSeeded] Token mismatch (stale session?), updating with current token"
-						: "[ensureZooGatewayProfileSeeded] Existing zoo-gateway profile has no token, updating with cached token",
-				)
-			} catch {
-				// Profile lookup failed — proceed to seed
-				this.log("[ensureZooGatewayProfileSeeded] Failed to read existing profile, will re-seed")
-			}
-		} else {
+		if (zooGatewayProfiles.length === 0) {
 			this.log("[ensureZooGatewayProfileSeeded] No zoo-gateway profile found, creating one")
+		} else {
+			let allUpToDate = true
+
+			for (const entry of zooGatewayProfiles) {
+				try {
+					const fullProfile = await this.providerSettingsManager.getProfile({ name: entry.name })
+					if (fullProfile.zooSessionToken !== token) {
+						allUpToDate = false
+						this.log(
+							fullProfile.zooSessionToken
+								? "[ensureZooGatewayProfileSeeded] Token mismatch (stale session?), updating with current token"
+								: "[ensureZooGatewayProfileSeeded] Existing zoo-gateway profile has no token, updating with cached token",
+						)
+						break
+					}
+				} catch {
+					allUpToDate = false
+					this.log("[ensureZooGatewayProfileSeeded] Failed to read existing profile, will re-seed")
+					break
+				}
+			}
+
+			if (allUpToDate) {
+				// All profiles have the current token — nothing to do
+				return
+			}
 		}
 
-		// User has token but either no profile, profile without token, or stale token — seed it
+		// User has token but either no profile, some profiles without token, or stale tokens — seed all
 		await this.handleZooCodeCallback(token)
 	}
 
