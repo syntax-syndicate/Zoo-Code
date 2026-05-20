@@ -2506,11 +2506,12 @@ describe("ClineProvider - Router Models", () => {
 				openrouter: mockModels,
 				requesty: mockModels,
 				unbound: mockModels,
+				"vercel-ai-gateway": mockModels,
+				"zoo-gateway": mockModels,
 				roo: {},
 				litellm: mockModels,
 				ollama: {},
 				lmstudio: {},
-				"vercel-ai-gateway": mockModels,
 				poe: {},
 				deepseek: {},
 			},
@@ -2542,6 +2543,7 @@ describe("ClineProvider - Router Models", () => {
 			.mockRejectedValueOnce(new Error("Requesty API error")) // requesty fail
 			.mockResolvedValueOnce(mockModels) // unbound success
 			.mockResolvedValueOnce(mockModels) // vercel-ai-gateway success
+			.mockResolvedValueOnce(mockModels) // zoo-gateway success
 			.mockRejectedValueOnce(new Error("LiteLLM connection failed")) // litellm fail
 
 		await messageHandler({ type: "requestRouterModels" })
@@ -2553,11 +2555,12 @@ describe("ClineProvider - Router Models", () => {
 				openrouter: mockModels,
 				requesty: {},
 				unbound: mockModels,
+				"vercel-ai-gateway": mockModels,
+				"zoo-gateway": mockModels,
 				roo: {},
 				ollama: {},
 				lmstudio: {},
 				litellm: {},
-				"vercel-ai-gateway": mockModels,
 				poe: {},
 				deepseek: {},
 			},
@@ -2649,11 +2652,12 @@ describe("ClineProvider - Router Models", () => {
 				openrouter: mockModels,
 				requesty: mockModels,
 				unbound: mockModels,
+				"vercel-ai-gateway": mockModels,
+				"zoo-gateway": mockModels,
 				roo: {},
 				litellm: {},
 				ollama: {},
 				lmstudio: {},
-				"vercel-ai-gateway": mockModels,
 				poe: {},
 				deepseek: {},
 			},
