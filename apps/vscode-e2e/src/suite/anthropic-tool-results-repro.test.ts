@@ -4,7 +4,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "http"
 import * as path from "path"
 import * as vscode from "vscode"
 
-import { RooCodeEventName } from "@roo-code/types"
+import { RooCodeEventName, type ClineMessage } from "@roo-code/types"
 
 import { setDefaultSuiteTimeout } from "./test-utils"
 import { sleep, waitFor } from "./utils"
@@ -16,10 +16,31 @@ type CapturedAnthropicRequest = {
 	}>
 }
 
-type ToolUseSpec = {
-	id: string
-	name: string
-	input: Record<string, unknown>
+const ANTHROPIC_MESSAGES_PATH = "/v1/messages"
+const ANTHROPIC_API_ORIGIN = "https://api.anthropic.com"
+// Substring of the real Anthropic API error we want to surface in real-endpoint mode.
+// The model returns "messages.N: tool_use ids were found without tool_result blocks
+// immediately after:" — we match on the stable part so test output stays deterministic
+// across API wording tweaks.
+const TOOL_RESULT_CONTRACT_ERROR = "tool_use ids were found without tool_result blocks"
+
+// IDs the matching fixture (apps/vscode-e2e/fixtures/anthropic-tool-results-repro.json)
+// emits for the four parallel read_file tool calls on turn 1. Kept in sync with that file.
+const FIXTURE_TOOL_USE_IDS = [
+	"toolu_repro_190_read_1",
+	"toolu_repro_190_read_2",
+	"toolu_repro_190_read_3",
+	"toolu_repro_190_read_4",
+]
+
+const ALLOWED_PROXY_HOSTS = new Set(["127.0.0.1", "localhost", "api.anthropic.com"])
+
+function isMessagesUrl(rawUrl: string): boolean {
+	try {
+		return new URL(rawUrl).pathname.endsWith(ANTHROPIC_MESSAGES_PATH)
+	} catch {
+		return false
+	}
 }
 
 function readRequestBody(req: IncomingMessage): Promise<string> {
@@ -31,173 +52,115 @@ function readRequestBody(req: IncomingMessage): Promise<string> {
 	})
 }
 
-function writeSse(res: ServerResponse, event: unknown) {
-	const eventName =
-		typeof event === "object" && event !== null && "type" in event
-			? String((event as { type: string }).type)
-			: "message"
-	res.write(`event: ${eventName}\n`)
-	res.write(`data: ${JSON.stringify(event)}\n\n`)
+function writeResponseHeaders(target: ServerResponse, source: Response) {
+	const headers: Record<string, string> = {}
+	source.headers.forEach((value, key) => {
+		if (key.toLowerCase() !== "content-length") {
+			headers[key] = value
+		}
+	})
+	target.writeHead(source.status, headers)
 }
 
-function writeAnthropicToolUseResponse(res: ServerResponse, model: string, toolUses: ToolUseSpec[]) {
-	res.writeHead(200, {
-		"content-type": "text/event-stream",
-		"cache-control": "no-cache",
-		connection: "keep-alive",
-	})
+async function pipeFetchResponse(target: ServerResponse, source: Response) {
+	writeResponseHeaders(target, source)
 
-	writeSse(res, {
-		type: "message_start",
-		message: {
-			id: "msg_repro_190_tools",
-			type: "message",
-			role: "assistant",
-			content: [],
-			model,
-			stop_reason: null,
-			stop_sequence: null,
-			usage: { input_tokens: 1, output_tokens: 1 },
-		},
-	})
-
-	for (const [index, toolUse] of toolUses.entries()) {
-		writeSse(res, {
-			type: "content_block_start",
-			index,
-			content_block: {
-				type: "tool_use",
-				id: toolUse.id,
-				name: toolUse.name,
-				input: {},
-			},
-		})
-		writeSse(res, {
-			type: "content_block_delta",
-			index,
-			delta: {
-				type: "input_json_delta",
-				partial_json: JSON.stringify(toolUse.input),
-			},
-		})
-		writeSse(res, { type: "content_block_stop", index })
+	if (!source.body) {
+		target.end()
+		return
 	}
 
-	writeSse(res, {
-		type: "message_delta",
-		delta: { stop_reason: "tool_use", stop_sequence: null },
-		usage: { output_tokens: 1 },
-	})
-	writeSse(res, { type: "message_stop" })
-	res.end()
+	const reader = source.body.getReader()
+	while (true) {
+		const { done, value } = await reader.read()
+		if (done) {
+			break
+		}
+		target.write(value)
+	}
+
+	target.end()
 }
 
-function writeAnthropicAttemptCompletionResponse(res: ServerResponse, model: string) {
-	res.writeHead(200, {
-		"content-type": "text/event-stream",
-		"cache-control": "no-cache",
-		connection: "keep-alive",
-	})
+function resolveAllowedUpstreamUrl(baseUrl: string): URL {
+	const upstreamBase = new URL(baseUrl)
+	const isLocalProxy = upstreamBase.hostname === "127.0.0.1" || upstreamBase.hostname === "localhost"
 
-	writeSse(res, {
-		type: "message_start",
-		message: {
-			id: "msg_repro_190_done",
-			type: "message",
-			role: "assistant",
-			content: [],
-			model,
-			stop_reason: null,
-			stop_sequence: null,
-			usage: { input_tokens: 1, output_tokens: 1 },
-		},
-	})
-	writeSse(res, {
-		type: "content_block_start",
-		index: 0,
-		content_block: {
-			type: "tool_use",
-			id: "toolu_repro_190_done",
-			name: "attempt_completion",
-			input: {},
-		},
-	})
-	writeSse(res, {
-		type: "content_block_delta",
-		index: 0,
-		delta: {
-			type: "input_json_delta",
-			partial_json: JSON.stringify({ result: "ANTHROPIC_TOOL_RESULTS_REPRO_DONE" }),
-		},
-	})
-	writeSse(res, { type: "content_block_stop", index: 0 })
-	writeSse(res, {
-		type: "message_delta",
-		delta: { stop_reason: "tool_use", stop_sequence: null },
-		usage: { output_tokens: 1 },
-	})
-	writeSse(res, { type: "message_stop" })
-	res.end()
+	if (
+		!ALLOWED_PROXY_HOSTS.has(upstreamBase.hostname) ||
+		(isLocalProxy ? upstreamBase.protocol !== "http:" : baseUrl !== ANTHROPIC_API_ORIGIN)
+	) {
+		throw new Error(`Unexpected Anthropic proxy target: ${upstreamBase.origin}`)
+	}
+
+	return new URL(ANTHROPIC_MESSAGES_PATH, upstreamBase)
 }
 
-async function withAnthropicReproServer<T>(
-	run: (args: { baseUrl: string; requests: CapturedAnthropicRequest[]; toolUses: ToolUseSpec[] }) => Promise<T>,
-) {
+async function withAnthropicProxy<T>(
+	baseUrl: string,
+	run: (args: { proxyUrl: string; requests: CapturedAnthropicRequest[] }) => Promise<T>,
+): Promise<T> {
 	const requests: CapturedAnthropicRequest[] = []
-	const toolUses: ToolUseSpec[] = [
-		{
-			id: "toolu_repro_190_read_1",
-			name: "read_file",
-			input: { path: "anthropic-tool-results-repro/file-1.txt" },
-		},
-		{
-			id: "toolu_repro_190_read_2",
-			name: "read_file",
-			input: { path: "anthropic-tool-results-repro/file-2.txt" },
-		},
-		{
-			id: "toolu_repro_190_read_3",
-			name: "read_file",
-			input: { path: "anthropic-tool-results-repro/file-3.txt" },
-		},
-		{
-			id: "toolu_repro_190_read_4",
-			name: "read_file",
-			input: { path: "anthropic-tool-results-repro/file-4.txt" },
-		},
-	]
+	let proxyError: Error | undefined
 
 	const server = createServer(async (req, res) => {
-		if (req.method !== "POST" || req.url !== "/v1/messages") {
-			res.writeHead(404)
-			res.end("Not found")
-			return
+		try {
+			const requestUrl = req.url ?? "/"
+
+			if (!isMessagesUrl(`http://127.0.0.1${requestUrl}`)) {
+				res.writeHead(404)
+				res.end("Not found")
+				return
+			}
+
+			const bodyText = await readRequestBody(req)
+			const body = JSON.parse(bodyText) as CapturedAnthropicRequest
+			requests.push({ messages: body.messages ?? [] })
+
+			const forwardHeaders: Record<string, string> = {}
+			for (const [key, value] of Object.entries(req.headers)) {
+				if (
+					key.toLowerCase() !== "host" &&
+					key.toLowerCase() !== "content-length" &&
+					typeof value === "string"
+				) {
+					forwardHeaders[key] = value
+				}
+			}
+
+			const upstreamUrl = resolveAllowedUpstreamUrl(baseUrl)
+			const upstream = await fetch(upstreamUrl, {
+				method: req.method,
+				headers: forwardHeaders,
+				body: bodyText,
+			})
+
+			await pipeFetchResponse(res, upstream)
+		} catch (error) {
+			proxyError = error instanceof Error ? error : new Error(String(error))
+			console.error("Anthropic repro proxy request failed:", proxyError)
+			if (!res.headersSent) {
+				res.writeHead(500)
+			}
+			res.end("Anthropic proxy request failed")
 		}
-
-		const rawBody = await readRequestBody(req)
-		const body = JSON.parse(rawBody) as CapturedAnthropicRequest & { model?: string }
-		requests.push({ messages: body.messages ?? [] })
-
-		if (requests.length === 1) {
-			writeAnthropicToolUseResponse(res, body.model ?? "claude-opus-4-7", toolUses)
-			return
-		}
-
-		writeAnthropicAttemptCompletionResponse(res, body.model ?? "claude-opus-4-7")
 	})
 
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()))
 	const address = server.address()
 	if (!address || typeof address === "string") {
-		throw new Error("Failed to start Anthropic repro server")
+		server.close()
+		throw new Error("Failed to start Anthropic repro proxy server")
 	}
 
+	const proxyUrl = `http://127.0.0.1:${address.port}`
+
 	try {
-		return await run({
-			baseUrl: `http://127.0.0.1:${address.port}`,
-			requests,
-			toolUses,
-		})
+		const result = await run({ proxyUrl, requests })
+		if (proxyError) {
+			throw proxyError
+		}
+		return result
 	} finally {
 		await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())))
 	}
@@ -221,6 +184,32 @@ function extractToolResultIds(content: unknown): string[] {
 				(block as { type?: string }).type === "tool_result",
 		)
 		.map((block) => block.tool_use_id)
+}
+
+// In real-endpoint mode we forward to api.anthropic.com but only see request bodies,
+// not responses. An assistant message's tool_use blocks only become visible to us on
+// the *next* request body (when the agent appends them to history). Returns the maximum
+// tool_use block count across all captured assistant messages.
+function maxAssistantParallelToolUses(requests: CapturedAnthropicRequest[]): number {
+	let max = 0
+	for (const req of requests) {
+		for (const msg of req.messages) {
+			if (msg.role !== "assistant" || !Array.isArray(msg.content)) continue
+			let count = 0
+			for (const block of msg.content) {
+				if (
+					typeof block === "object" &&
+					block !== null &&
+					"type" in block &&
+					(block as { type?: string }).type === "tool_use"
+				) {
+					count++
+				}
+			}
+			if (count > max) max = count
+		}
+	}
+	return max
 }
 
 suite("Anthropic tool_result repro", function () {
@@ -264,10 +253,23 @@ suite("Anthropic tool_result repro", function () {
 		})
 	})
 
-	test("should send matching tool_result blocks after a four-tool Anthropic response", async () => {
+	test("should send matching tool_result blocks after a four-tool Anthropic response", async function () {
 		const api = globalThis.api
+		const aimockUrl = process.env.AIMOCK_URL
+		const realAnthropicKey = process.env.ANTHROPIC_API_KEY
+		const isRecord = process.env.AIMOCK_RECORD === "true"
+		const useRealEndpoint = !!realAnthropicKey && !aimockUrl
+
+		// Mock mode requires aimock (which serves the matching fixture). Real mode requires
+		// ANTHROPIC_API_KEY and no aimock running (so the proxy forwards to api.anthropic.com).
+		if (!aimockUrl && !realAnthropicKey) {
+			this.skip()
+		}
+
+		const captureBaseUrl = useRealEndpoint ? ANTHROPIC_API_ORIGIN : aimockUrl!
 		let taskCompleted = false
 		let taskId: string | undefined
+		const apiErrors: string[] = []
 
 		const onTaskCompleted = (completedTaskId: string) => {
 			if (completedTaskId === taskId) {
@@ -275,15 +277,33 @@ suite("Anthropic tool_result repro", function () {
 			}
 		}
 
+		const onMessage = ({ message }: { message: ClineMessage }) => {
+			// API failures on the first chunk surface as ask("api_req_failed", error.message).
+			// Mid-stream / other failures surface as say("error", ...). Capture both so the
+			// real-endpoint mode can detect Anthropic's tool_use/tool_result contract error.
+			if (typeof message.text !== "string") {
+				return
+			}
+			if (message.type === "ask" && message.ask === "api_req_failed") {
+				apiErrors.push(message.text)
+			} else if (message.type === "say" && message.say === "error") {
+				apiErrors.push(message.text)
+			}
+		}
+
 		api.on(RooCodeEventName.TaskCompleted, onTaskCompleted)
+		api.on(RooCodeEventName.Message, onMessage)
 
 		try {
-			await withAnthropicReproServer(async ({ baseUrl, requests, toolUses }) => {
+			await withAnthropicProxy(captureBaseUrl, async ({ proxyUrl, requests }) => {
+				// In mock mode the API key just has to be non-empty so the SDK constructs a client.
+				// In real / record mode the actual ANTHROPIC_API_KEY is forwarded through the proxy
+				// (and aimock, when present) so upstream auth succeeds.
 				await api.setConfiguration({
 					apiProvider: "anthropic" as const,
-					apiKey: "mock-key",
+					apiKey: aimockUrl && !isRecord ? "mock-key" : realAnthropicKey!,
 					apiModelId: "claude-opus-4-7",
-					anthropicBaseUrl: baseUrl,
+					anthropicBaseUrl: proxyUrl,
 				})
 
 				taskId = await api.startNewTask({
@@ -296,10 +316,54 @@ suite("Anthropic tool_result repro", function () {
 					},
 					text:
 						"anthropic-tool-results-repro: use only read_file to read the four files in anthropic-tool-results-repro " +
-						"and then report that you finished. Do not run shell commands.",
+						"(file-1.txt, file-2.txt, file-3.txt, file-4.txt) in parallel, then report that you finished. " +
+						"Do not run shell commands.",
 				})
 
-				await waitFor(() => taskCompleted || requests.length >= 2, { timeout: 120_000, interval: 250 })
+				if (useRealEndpoint) {
+					// Real mode: wait for either task completion or an Anthropic contract violation
+					// surfaced via api_req_failed. Don't pin specific tool ids (Claude is free to
+					// pick its own), but after the run we DO require evidence that the agent
+					// actually exercised the parallel-tool path the bug report described — a
+					// sequential read of all four files would never hit the failure mode and would
+					// give us a false-negative pass.
+					await waitFor(
+						() => taskCompleted || apiErrors.some((text) => text.includes(TOOL_RESULT_CONTRACT_ERROR)),
+						{ timeout: 6 * 60_000, interval: 500 },
+					)
+
+					const contractViolation = apiErrors.find((text) => text.includes(TOOL_RESULT_CONTRACT_ERROR))
+					assert.strictEqual(
+						contractViolation,
+						undefined,
+						`Anthropic rejected a request with a tool_use/tool_result contract violation.\n` +
+							`error=${contractViolation}\n` +
+							`requestsCaptured=${requests.length}`,
+					)
+
+					assert.ok(taskCompleted, "Task should complete against the real Anthropic endpoint")
+
+					const maxParallel = maxAssistantParallelToolUses(requests)
+					if (maxParallel < 2) {
+						// Inconclusive: the model picked a non-parallel path so this run never
+						// stressed the codepath the issue describes. Mark the test pending instead
+						// of green so a passing CI signal doesn't imply we proved the fix end-to-end.
+						console.warn(
+							`Anthropic repro: model used at most ${maxParallel} parallel tool_use block(s) per turn ` +
+								`(need >=2 to exercise the bug). Skipping rather than reporting a green pass.`,
+						)
+						this.skip()
+					}
+					return
+				}
+
+				// Mock mode: aimock serves the fixture (4 parallel read_file toolCalls on turn 1,
+				// attempt_completion on turn 2). Wait for the second /v1/messages and assert it
+				// carries 4 matching tool_result IDs.
+				await waitFor(() => taskCompleted || requests.length >= 2, {
+					timeout: 120_000,
+					interval: 250,
+				})
 				await waitFor(() => requests.length >= 2, { timeout: 30_000, interval: 250 })
 
 				if (!taskCompleted) {
@@ -311,16 +375,16 @@ suite("Anthropic tool_result repro", function () {
 
 				const lastUserMessage = getLastUserMessage(secondRequest.messages)
 				const presentToolResultIds = extractToolResultIds(lastUserMessage?.content)
-				const expectedToolUseIds = toolUses.map((toolUse) => toolUse.id)
 
 				assert.deepStrictEqual(
 					presentToolResultIds,
-					expectedToolUseIds,
-					`Expected matching tool_result IDs in the second Anthropic request.\nexpected=${JSON.stringify(expectedToolUseIds)}\nactual=${JSON.stringify(presentToolResultIds)}\nlastUser=${JSON.stringify(lastUserMessage?.content)}`,
+					FIXTURE_TOOL_USE_IDS,
+					`Expected matching tool_result IDs in the second Anthropic request.\nexpected=${JSON.stringify(FIXTURE_TOOL_USE_IDS)}\nactual=${JSON.stringify(presentToolResultIds)}\nlastUser=${JSON.stringify(lastUserMessage?.content)}`,
 				)
 			})
 		} finally {
 			api.off(RooCodeEventName.TaskCompleted, onTaskCompleted)
+			api.off(RooCodeEventName.Message, onMessage)
 
 			if (taskId && !taskCompleted) {
 				try {

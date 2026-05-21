@@ -246,6 +246,33 @@ await api.setConfiguration({
 
 Always restore the default OpenRouter config in `suiteTeardown` so subsequent suites are unaffected.
 
+### Running an Anthropic-provider test against the real API
+
+Tests that use the Anthropic provider can be authored to flip between mock mode (aimock-backed,
+deterministic) and real-endpoint mode (live `/v1/messages`) based on env. `anthropic-opus-4-7`
+and `anthropic-tool-results-repro` both follow this pattern.
+
+The test wraps an HTTP proxy server (`withAnthropicProxy(baseUrl, ...)`) that forwards to:
+
+- **Mock mode** (default — no `ANTHROPIC_API_KEY`): aimock, which serves the corresponding JSON
+  fixture in `fixtures/`. Request shape can be asserted directly because both the prompt and the
+  response are pinned.
+- **Real-endpoint mode** (`ANTHROPIC_API_KEY` set, no aimock active): `https://api.anthropic.com`.
+  Useful for catching wire-protocol contract issues that only the real API enforces. Tests in
+  this mode should assert on observable outcomes (task completion, captured error events) rather
+  than precise request shape, because the model is free to pick any tool sequence.
+
+To run such a test against the real Anthropic API, add `ANTHROPIC_API_KEY=<key>` to
+`apps/vscode-e2e/.env.local` and run with the targeted file:
+
+```sh
+TEST_FILE=<your-test>.test.js pnpm --filter @roo-code/vscode-e2e test:ci
+```
+
+`test:ci` (not `test:ci:mock`) is required so aimock does not start and `AIMOCK_URL` stays unset;
+that is what flips the test into real-endpoint mode. `TEST_FILE` is required so unrelated suites
+don't burn through the real API.
+
 ## Programmatic fixtures (regex matching)
 
 For requests that can't be matched by a stable substring (e.g. "starts with `<environment_details>` but not preceded by a user message"), add a programmatic fixture in `src/runTest.ts` using `mock.addFixture()` with a `RegExp` match. These are only available in replay mode and are not recorded.

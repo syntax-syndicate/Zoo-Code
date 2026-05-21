@@ -196,10 +196,16 @@ describe("injectSyntheticToolResults", () => {
 
 		const result = injectSyntheticToolResults(messages)
 
-		expect(result.length).toBe(4)
-		const syntheticContent = result[3].content as any[]
-		expect(syntheticContent.length).toBe(1)
-		expect(syntheticContent[0].tool_use_id).toBe("orphan-tool")
+		// The synthetic tool_result for the orphan is merged into the existing user message
+		// (Anthropic's positional contract requires the next user message after the assistant
+		// tool_use turn to carry every matching tool_result; injecting a separate user message
+		// here would split that across two messages and remain ambiguous after downstream
+		// mergeConsecutiveApiMessages depending on adjacency).
+		expect(result.length).toBe(3)
+		const mergedUserContent = result[2].content as any[]
+		expect(mergedUserContent).toHaveLength(2)
+		expect(mergedUserContent[0]).toMatchObject({ type: "tool_result", tool_use_id: "matched-tool" })
+		expect(mergedUserContent[1]).toMatchObject({ type: "tool_result", tool_use_id: "orphan-tool" })
 	})
 
 	it("should handle messages with string content (no tool_use/tool_result)", () => {

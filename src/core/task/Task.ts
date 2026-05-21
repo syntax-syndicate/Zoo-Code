@@ -4083,13 +4083,8 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		// This allows non-destructive condensing where messages are tagged but not deleted,
 		// enabling accurate rewind operations while still sending condensed history to the API.
 		const effectiveHistory = getEffectiveApiHistory(this.apiConversationHistory)
-		// Pair any assistant tool_use blocks whose tool_result was filtered away by history
-		// shaping (truncation or condensation). Without this, the next /v1/messages request
-		// can carry a tool_use without a matching tool_result in the following user message —
-		// Anthropic rejects that with "tool_use ids were found without tool_result blocks
-		// immediately after" (see issue #190). Applied only on the send path; the validator
-		// peeks in Task.ts:945 and apiConversationHistory.ts:110 must keep seeing the raw
-		// effective history so their lastEffective.role checks remain meaningful.
+		// Send-path only: insert-time validators elsewhere rely on lastEffective.role
+		// reflecting the raw shape, so we don't apply this inside getEffectiveApiHistory.
 		const paddedEffectiveHistory = injectSyntheticToolResults(
 			effectiveHistory,
 			SYNTHETIC_TOOL_RESULT_REASONS.historyShaping,

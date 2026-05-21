@@ -1,0 +1,46 @@
+{
+	"fixtures": [
+		{
+			"match": {
+				"userMessage": "anthropic-tool-results-repro: use only read_file to read the four files",
+				"sequenceIndex": 0
+			},
+			"response": {
+				"toolCalls": [
+					{
+						"name": "read_file",
+						"arguments": "{\"path\":\"anthropic-tool-results-repro/file-1.txt\"}",
+						"id": "toolu_repro_190_read_1"
+					},
+					{
+						"name": "read_file",
+						"arguments": "{\"path\":\"anthropic-tool-results-repro/file-2.txt\"}",
+						"id": "toolu_repro_190_read_2"
+					},
+					{
+						"name": "read_file",
+						"arguments": "{\"path\":\"anthropic-tool-results-repro/file-3.txt\"}",
+						"id": "toolu_repro_190_read_3"
+					},
+					{
+						"name": "read_file",
+						"arguments": "{\"path\":\"anthropic-tool-results-repro/file-4.txt\"}",
+						"id": "toolu_repro_190_read_4"
+					}
+				]
+			}
+		},
+		{
+			"match": { "toolCallId": "toolu_repro_190_read_4" },
+			"response": {
+				"toolCalls": [
+					{
+						"name": "attempt_completion",
+						"arguments": "{\"result\":\"ANTHROPIC_TOOL_RESULTS_REPRO_DONE\"}",
+						"id": "toolu_repro_190_done"
+					}
+				]
+			}
+		}
+	]
+}

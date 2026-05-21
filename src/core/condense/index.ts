@@ -13,6 +13,9 @@ import { RooIgnoreController } from "../ignore/RooIgnoreController"
 import { MissingToolResultError } from "../task/validateToolResultIds"
 import { generateFoldedFileContext } from "./foldedFileContext"
 
+// Body of a synthetic tool_result block. Anthropic rejects orphan tool_use with
+// "tool_use ids were found without tool_result blocks immediately after"; OpenAI's
+// Responses API rejects orphan tool_calls.
 export const SYNTHETIC_TOOL_RESULT_REASONS = {
 	condense: "Context condensation triggered. Tool execution deferred.",
 	historyShaping:
@@ -133,55 +136,105 @@ The "most recent user request" and "next step" must be based on what the user wa
 The goal is for work to continue seamlessly after condensation - as if it never happened.`
 
 /**
- * Injects synthetic tool_results for orphan tool_calls that don't have matching results.
- * This is necessary because OpenAI's Responses API rejects conversations with orphan tool_calls,
- * and Anthropic's Messages API rejects requests with unpaired tool_use blocks.
- *
- * This can happen when:
- *  - The user triggers condense after receiving a tool_call but before responding to it
- *    (original use case; pass reason "condense").
- *  - History shaping (truncation/condensation filters in `getEffectiveApiHistory`) drops the
- *    user message that carried a tool_result while leaving the assistant tool_use behind
- *    (issue #190; pass reason "historyShaping").
- *
- * Emits MissingToolResultError telemetry on each fired injection so we can confirm in
- * production whether this guard is doing work and which source dominates.
- *
- * @param messages - The conversation messages to process
- * @param reason - The synthetic tool_result body used to pair orphans. Defaults to the
- *                condense reason to preserve historical behavior.
- * @returns The messages with synthetic tool_results appended if needed
+ * Pairs each assistant tool_use block with a tool_result block in the immediately
+ * following user message, adding synthetic placeholders for any that are missing.
+ * Existing tool_result blocks are left untouched. Emits MissingToolResultError telemetry
+ * when it fires.
  */
 export function injectSyntheticToolResults(
 	messages: ApiMessage[],
 	reason: SyntheticToolResultReason = SYNTHETIC_TOOL_RESULT_REASONS.condense,
 ): ApiMessage[] {
-	// Find all tool_call IDs in assistant messages
-	const toolCallIds = new Set<string>()
-	// Find all tool_result IDs in user messages
-	const toolResultIds = new Set<string>()
+	// Pairing is positional, not set-based: a trailing append would satisfy "every tool_use
+	// id appears somewhere" but still leave the assistant tool_use turn followed by a
+	// non-result user message. The unit checked is the span of consecutive user messages
+	// after the orphan-bearing assistant — what the provider sees as "the next user
+	// message" once `mergeConsecutiveApiMessages` fuses them. A truncation marker stops
+	// the span (merge refuses to cross one).
+	const out: ApiMessage[] = messages.map((msg) => msg)
+	const allOrphanIds: string[] = []
+	const allExistingResultIds = new Set<string>()
+	let toolUseCount = 0
+	let toolResultCount = 0
 
-	for (const msg of messages) {
-		if (msg.role === "assistant" && Array.isArray(msg.content)) {
-			for (const block of msg.content) {
-				if (block.type === "tool_use") {
-					toolCallIds.add(block.id)
-				}
+	for (let i = 0; i < out.length; i++) {
+		const msg = out[i]
+		if (msg.role !== "assistant" || !Array.isArray(msg.content)) {
+			continue
+		}
+
+		const toolUseIds: string[] = []
+		for (const block of msg.content) {
+			if (block.type === "tool_use") {
+				toolUseIds.push(block.id)
 			}
 		}
-		if (msg.role === "user" && Array.isArray(msg.content)) {
-			for (const block of msg.content) {
-				if (block.type === "tool_result") {
-					toolResultIds.add(block.tool_use_id)
+		toolUseCount += toolUseIds.length
+
+		if (toolUseIds.length === 0) {
+			continue
+		}
+
+		let spanEnd = i + 1
+		const spanResultIds = new Set<string>()
+		while (spanEnd < out.length) {
+			const candidate = out[spanEnd]
+			if (candidate.role !== "user") break
+			if (Array.isArray(candidate.content)) {
+				for (const block of candidate.content) {
+					if (block.type === "tool_result") {
+						spanResultIds.add(block.tool_use_id)
+						allExistingResultIds.add(block.tool_use_id)
+						toolResultCount++
+					}
 				}
 			}
+			if (candidate.isTruncationMarker) {
+				// Marker is in the span but merge refuses to cross it.
+				spanEnd++
+				break
+			}
+			spanEnd++
+		}
+
+		const missing = toolUseIds.filter((id) => !spanResultIds.has(id))
+		if (missing.length === 0) {
+			continue
+		}
+
+		allOrphanIds.push(...missing)
+
+		const syntheticResults: Anthropic.Messages.ToolResultBlockParam[] = missing.map((id) => ({
+			type: "tool_result" as const,
+			tool_use_id: id,
+			content: reason,
+		}))
+
+		// Append to the first non-marker user message in the span, or splice a fresh one.
+		let mergeTarget = -1
+		for (let j = i + 1; j < spanEnd; j++) {
+			if (out[j].role === "user" && Array.isArray(out[j].content) && !out[j].isTruncationMarker) {
+				mergeTarget = j
+				break
+			}
+		}
+
+		if (mergeTarget >= 0) {
+			const target = out[mergeTarget]
+			out[mergeTarget] = {
+				...target,
+				content: [...(target.content as Anthropic.Messages.ContentBlockParam[]), ...syntheticResults],
+			}
+		} else {
+			out.splice(i + 1, 0, {
+				role: "user",
+				content: syntheticResults,
+				ts: Date.now(),
+			})
 		}
 	}
 
-	// Find orphans (tool_calls without matching tool_results)
-	const orphanIds = [...toolCallIds].filter((id) => !toolResultIds.has(id))
-
-	if (orphanIds.length === 0) {
+	if (allOrphanIds.length === 0) {
 		return messages
 	}
 
@@ -191,35 +244,22 @@ export function injectSyntheticToolResults(
 	if (TelemetryService.hasInstance()) {
 		TelemetryService.instance.captureException(
 			new MissingToolResultError(
-				`injectSyntheticToolResults paired ${orphanIds.length} orphan tool_use block(s). reason=${reason}`,
-				orphanIds,
-				[...toolResultIds],
+				`injectSyntheticToolResults paired ${allOrphanIds.length} orphan tool_use block(s). reason=${reason}`,
+				allOrphanIds,
+				[...allExistingResultIds],
 			),
 			{
 				reason,
-				missingToolUseIds: orphanIds,
-				existingToolResultIds: [...toolResultIds],
-				toolUseCount: toolCallIds.size,
-				toolResultCount: toolResultIds.size,
+				missingToolUseIds: allOrphanIds,
+				existingToolResultIds: [...allExistingResultIds],
+				toolUseCount,
+				toolResultCount,
 				source: "injectSyntheticToolResults",
 			},
 		)
 	}
 
-	// Inject synthetic tool_results as a new user message
-	const syntheticResults: Anthropic.Messages.ToolResultBlockParam[] = orphanIds.map((id) => ({
-		type: "tool_result" as const,
-		tool_use_id: id,
-		content: reason,
-	}))
-
-	const syntheticMessage: ApiMessage = {
-		role: "user",
-		content: syntheticResults,
-		ts: Date.now(),
-	}
-
-	return [...messages, syntheticMessage]
+	return out
 }
 
 /**
