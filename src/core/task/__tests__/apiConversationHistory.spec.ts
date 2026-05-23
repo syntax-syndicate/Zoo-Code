@@ -39,7 +39,9 @@ describe("prepareApiConversationMessage", () => {
 		const result = prepareApiConversationMessage({
 			message: { role: "assistant", content: "answer" },
 			reasoning: "visible reasoning",
-			api: {} as any,
+			api: {
+				getModel: () => ({ info: {} }),
+			} as any,
 			apiConfiguration: { apiProvider: "openrouter", openRouterModelId: "openai/gpt-4" } as any,
 			apiConversationHistory: [],
 		}) as any
@@ -50,11 +52,31 @@ describe("prepareApiConversationMessage", () => {
 		])
 	})
 
+	it("stores reasoning_content for OpenAI-format models that need reasoning replay", () => {
+		const result = prepareApiConversationMessage({
+			message: { role: "assistant", content: "answer" },
+			reasoning: "visible reasoning",
+			api: {
+				getModel: () => ({ info: { preserveReasoning: true } }),
+			} as any,
+			apiConfiguration: { apiProvider: "deepseek", apiModelId: "deepseek-v4-pro" } as any,
+			apiConversationHistory: [],
+		}) as any
+
+		expect(result.reasoning_content).toBe("visible reasoning")
+		expect(result.content).toEqual([
+			{ type: "reasoning", text: "visible reasoning", summary: [] },
+			{ type: "text", text: "answer" },
+		])
+	})
+
 	it("falls back to generic reasoning blocks for Anthropic messages without thought signatures", () => {
 		const result = prepareApiConversationMessage({
 			message: { role: "assistant", content: "answer" },
 			reasoning: "private reasoning",
-			api: {} as any,
+			api: {
+				getModel: () => ({ info: {} }),
+			} as any,
 			apiConfiguration: { apiProvider: "anthropic", apiModelId: "claude-3-5-sonnet" } as any,
 			apiConversationHistory: [],
 		}) as any
@@ -70,6 +92,7 @@ describe("prepareApiConversationMessage", () => {
 		const result = prepareApiConversationMessage({
 			message: { role: "assistant", content: [{ type: "text", text: "answer" }] },
 			api: {
+				getModel: () => ({ info: {} }),
 				getEncryptedContent: () => ({ encrypted_content: "encrypted", id: "reasoning-1" }),
 			} as any,
 			apiConfiguration: { apiProvider: "openrouter", openRouterModelId: "openai/gpt-4" } as any,
@@ -86,6 +109,7 @@ describe("prepareApiConversationMessage", () => {
 		const result = prepareApiConversationMessage({
 			message: { role: "assistant", content: "answer" },
 			api: {
+				getModel: () => ({ info: {} }),
 				getThoughtSignature: () => "signature-1",
 				getReasoningDetails: () => [{ type: "reasoning", text: "detail" }],
 			} as any,

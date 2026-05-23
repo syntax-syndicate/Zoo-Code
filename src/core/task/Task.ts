@@ -4355,6 +4355,17 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		const cleanConversationHistory: (Anthropic.Messages.MessageParam | ReasoningItemForRequest)[] = []
 
 		for (const msg of messages) {
+			const preservedReasoningContent =
+				msg.role === "assistant" &&
+				typeof (msg as ApiMessage).reasoning_content === "string" &&
+				(msg as ApiMessage).reasoning_content!.trim().length > 0
+					? (msg as ApiMessage).reasoning_content
+					: undefined
+			const shouldReplayReasoningContent =
+				msg.role === "assistant" &&
+				this.api.getModel().info.preserveReasoning === true &&
+				!!preservedReasoningContent
+
 			// Standalone reasoning: send encrypted, skip plain text
 			if (msg.type === "reasoning") {
 				if (msg.encrypted_content) {
@@ -4442,29 +4453,27 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 					continue
 				} else if (hasPlainTextReasoning) {
 					// Check if the model's preserveReasoning flag is set
-					// If true, include the reasoning block in API requests
-					// If false/undefined, strip it out (stored for history only, not sent back to API)
-					const shouldPreserveForApi = this.api.getModel().info.preserveReasoning === true
+					// Replay preserved reasoning_content only when this exact message was
+					// stored with an explicit reasoning_content payload. This avoids
+					// converting unrelated reasoning blocks from other models into
+					// DeepSeek/Z.ai/MiMo continuation history during mixed-model tasks.
 					let assistantContent: Anthropic.Messages.MessageParam["content"]
 
-					if (shouldPreserveForApi) {
-						// Include reasoning block in the content sent to API
-						assistantContent = contentArray
+					if (rest.length === 0) {
+						assistantContent = ""
+					} else if (rest.length === 1 && rest[0].type === "text") {
+						assistantContent = (rest[0] as Anthropic.Messages.TextBlockParam).text
 					} else {
-						// Strip reasoning out - stored for history only, not sent back to API
-						if (rest.length === 0) {
-							assistantContent = ""
-						} else if (rest.length === 1 && rest[0].type === "text") {
-							assistantContent = (rest[0] as Anthropic.Messages.TextBlockParam).text
-						} else {
-							assistantContent = rest
-						}
+						assistantContent = rest
 					}
 
-					cleanConversationHistory.push({
+					const assistantMessage: Anthropic.Messages.MessageParam & { reasoning_content?: string } = {
 						role: "assistant",
 						content: assistantContent,
-					} satisfies Anthropic.Messages.MessageParam)
+						...(shouldReplayReasoningContent ? { reasoning_content: preservedReasoningContent } : {}),
+					}
+
+					cleanConversationHistory.push(assistantMessage)
 
 					continue
 				}
@@ -4472,10 +4481,14 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 
 			// Default path for regular messages (no embedded reasoning)
 			if (msg.role) {
-				cleanConversationHistory.push({
+				const messageForRequest: Anthropic.Messages.MessageParam & { reasoning_content?: string } = {
 					role: msg.role,
 					content: msg.content as Anthropic.Messages.ContentBlockParam[] | string,
-				})
+					...(msg.role === "assistant" && shouldReplayReasoningContent
+						? { reasoning_content: preservedReasoningContent }
+						: {}),
+				}
+				cleanConversationHistory.push(messageForRequest)
 			}
 		}
 

@@ -112,6 +112,26 @@ describe("convertToOpenAiMessages", () => {
 		})
 	})
 
+	it("preserves assistant reasoning_content for OpenAI-compatible replay", () => {
+		const anthropicMessages = [
+			{
+				role: "assistant",
+				content: "First answer",
+				reasoning_content: "First reasoning",
+			},
+			{
+				role: "assistant",
+				content: [{ type: "text", text: "Second answer" }],
+				reasoning_content: "Second reasoning",
+			},
+		] as unknown as Anthropic.Messages.MessageParam[]
+
+		const openAiMessages = convertToOpenAiMessages(anthropicMessages)
+
+		expect((openAiMessages[0] as any).reasoning_content).toBe("First reasoning")
+		expect((openAiMessages[1] as any).reasoning_content).toBe("Second reasoning")
+	})
+
 	it("should handle user messages with tool results (no normalization without normalizeToolCallId)", () => {
 		const anthropicMessages: Anthropic.Messages.MessageParam[] = [
 			{

@@ -307,7 +307,10 @@ export function convertToOpenAiMessages(
 			// If a message also contains reasoning_details (Gemini 3 / xAI / o-series, etc.),
 			// we must preserve it here as well.
 			const messageWithDetails = anthropicMessage as any
-			const baseMessage: OpenAI.Chat.ChatCompletionMessageParam & { reasoning_details?: any[] } = {
+			const baseMessage: OpenAI.Chat.ChatCompletionMessageParam & {
+				reasoning_details?: any[]
+				reasoning_content?: string
+			} = {
 				role: anthropicMessage.role,
 				content: anthropicMessage.content,
 			}
@@ -316,6 +319,13 @@ export function convertToOpenAiMessages(
 				const mapped = mapReasoningDetails(messageWithDetails.reasoning_details)
 				if (mapped) {
 					;(baseMessage as any).reasoning_details = mapped
+				}
+
+				if (
+					typeof messageWithDetails.reasoning_content === "string" &&
+					messageWithDetails.reasoning_content.trim().length > 0
+				) {
+					baseMessage.reasoning_content = messageWithDetails.reasoning_content
 				}
 			}
 
@@ -480,6 +490,7 @@ export function convertToOpenAiMessages(
 				// when sending messages back to some APIs.
 				const baseMessage: OpenAI.Chat.ChatCompletionAssistantMessageParam & {
 					reasoning_details?: any[]
+					reasoning_content?: string
 				} = {
 					role: "assistant",
 					// Use empty string instead of undefined for providers like Gemini (via OpenRouter)
@@ -492,6 +503,13 @@ export function convertToOpenAiMessages(
 				const mapped = mapReasoningDetails(messageWithDetails.reasoning_details)
 				if (mapped) {
 					baseMessage.reasoning_details = mapped
+				}
+
+				if (
+					typeof messageWithDetails.reasoning_content === "string" &&
+					messageWithDetails.reasoning_content.trim().length > 0
+				) {
+					baseMessage.reasoning_content = messageWithDetails.reasoning_content
 				}
 
 				// Add tool_calls after reasoning_details

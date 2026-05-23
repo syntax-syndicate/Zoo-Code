@@ -416,6 +416,54 @@ describe("Task persistence", () => {
 		})
 	})
 
+	describe("buildCleanConversationHistory", () => {
+		it("replays reasoning_content only for assistant turns that were explicitly marked for it", () => {
+			const task = new Task({
+				provider: mockProvider,
+				apiConfiguration: mockApiConfig,
+				task: "test task",
+				startTask: false,
+			})
+
+			task.api = {
+				getModel: vi.fn().mockReturnValue({
+					id: "deepseek-v4-pro",
+					info: { preserveReasoning: true },
+				}),
+			} as any
+
+			const result = (task as any).buildCleanConversationHistory([
+				{
+					role: "assistant",
+					content: [
+						{ type: "reasoning", text: "Codex reasoning", summary: [] },
+						{ type: "text", text: "Codex answer" },
+					],
+				},
+				{
+					role: "assistant",
+					content: [
+						{ type: "reasoning", text: "DeepSeek reasoning", summary: [] },
+						{ type: "text", text: "DeepSeek answer" },
+					],
+					reasoning_content: "DeepSeek reasoning",
+				},
+			])
+
+			expect(result).toEqual([
+				{
+					role: "assistant",
+					content: "Codex answer",
+				},
+				{
+					role: "assistant",
+					content: "DeepSeek answer",
+					reasoning_content: "DeepSeek reasoning",
+				},
+			])
+		})
+	})
+
 	// ── flushPendingToolResultsToHistory — save failure/success ───────────
 
 	describe("flushPendingToolResultsToHistory persistence", () => {

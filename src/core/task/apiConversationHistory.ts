@@ -54,10 +54,13 @@ function prepareAssistantMessage(
 		modelId,
 	)
 	const isAnthropicProtocol = apiProtocol === "anthropic"
+	const shouldPersistReasoningContent =
+		apiProtocol === "openai" && reasoning && !reasoningDetails && handler.getModel().info.preserveReasoning === true
 
 	const messageWithTs: any = {
 		...message,
 		...(responseId ? { id: responseId } : {}),
+		...(shouldPersistReasoningContent ? { reasoning_content: reasoning } : {}),
 		ts: Date.now(),
 	}
 
