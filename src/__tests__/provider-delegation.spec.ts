@@ -188,8 +188,8 @@ describe("ClineProvider.delegateParentAndOpenChild()", () => {
 		).rejects.toThrow(persistError)
 
 		expect(childStart).not.toHaveBeenCalled()
-		expect(removeClineFromStack).toHaveBeenNthCalledWith(1, { skipDelegationRepair: true })
-		expect(removeClineFromStack).toHaveBeenNthCalledWith(2, { skipDelegationRepair: true })
+		expect(removeClineFromStack).toHaveBeenNthCalledWith(1, { skipChildInterruptMarking: true })
+		expect(removeClineFromStack).toHaveBeenNthCalledWith(2, { skipChildInterruptMarking: true })
 		expect(deleteTaskWithId).toHaveBeenCalledWith("child-1", false)
 		expect(createTaskWithHistoryItem).toHaveBeenCalledWith(parentHistory)
 	})

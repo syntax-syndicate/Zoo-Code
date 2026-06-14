@@ -210,7 +210,7 @@ describe("ClineProvider.removeClineFromStack() delegation awareness", () => {
 		expect(provider.updateTaskHistory).not.toHaveBeenCalled()
 	})
 
-	it("skips delegation repair when skipDelegationRepair option is true", async () => {
+	it("skips delegation repair when skipChildInterruptMarking option is true", async () => {
 		const { provider, updateTaskHistory, getTaskWithId } = buildMockProvider({
 			childTaskId: "child-1",
 			parentTaskId: "parent-1",
@@ -229,8 +229,8 @@ describe("ClineProvider.removeClineFromStack() delegation awareness", () => {
 			},
 		})
 
-		// Call with skipDelegationRepair: true (as delegateParentAndOpenChild would)
-		await (ClineProvider.prototype as any).removeClineFromStack.call(provider, { skipDelegationRepair: true })
+		// Call with skipChildInterruptMarking: true (as delegateParentAndOpenChild would)
+		await (ClineProvider.prototype as any).removeClineFromStack.call(provider, { skipChildInterruptMarking: true })
 
 		// Stack should be empty after pop
 		expect(provider.clineStack).toHaveLength(0)
@@ -242,7 +242,7 @@ describe("ClineProvider.removeClineFromStack() delegation awareness", () => {
 
 	it("does NOT reset grandparent during A→B→C nested delegation transition", async () => {
 		// Scenario: A delegated to B, B is now delegating to C.
-		// delegateParentAndOpenChild() pops B via removeClineFromStack({ skipDelegationRepair: true }).
+		// delegateParentAndOpenChild() pops B via removeClineFromStack({ skipChildInterruptMarking: true }).
 		// Grandparent A should remain "delegated" — its metadata must not be repaired.
 		const grandparentHistory = {
 			id: "task-A",
@@ -282,8 +282,8 @@ describe("ClineProvider.removeClineFromStack() delegation awareness", () => {
 			updateTaskHistory,
 		}
 
-		// Simulate what delegateParentAndOpenChild does: pop B with skipDelegationRepair
-		await (ClineProvider.prototype as any).removeClineFromStack.call(provider, { skipDelegationRepair: true })
+		// Simulate what delegateParentAndOpenChild does: pop B with skipChildInterruptMarking
+		await (ClineProvider.prototype as any).removeClineFromStack.call(provider, { skipChildInterruptMarking: true })
 
 		// B was popped
 		expect(provider.clineStack).toHaveLength(0)

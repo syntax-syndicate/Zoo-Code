@@ -150,7 +150,7 @@ suite("Roo Code Subtasks", function () {
 		}
 	})
 
-	// Race mitigation: skipDelegationRepair prevents removeClineFromStack from
+	// Race mitigation: skipChildInterruptMarking prevents removeClineFromStack from
 	// auto-resuming the parent when the child is cancelled (Race 2).
 	test("parent stays paused after subtask cancellation", async () => {
 		const api = globalThis.api

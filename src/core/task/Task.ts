@@ -31,6 +31,7 @@ import {
 	type ClineAsk,
 	type ToolProgressStatus,
 	type HistoryItem,
+	type TaskHistoryStatus,
 	type CreateTaskOptions,
 	type ModelInfo,
 	type ClineApiReqCancelReason,
@@ -157,7 +158,7 @@ export interface TaskOptions extends CreateTaskOptions {
 	initialTodos?: TodoItem[]
 	workspacePath?: string
 	/** Initial status for the task's history item (e.g., "active" for child tasks) */
-	initialStatus?: "active" | "delegated" | "completed" | "interrupted"
+	initialStatus?: TaskHistoryStatus
 }
 
 export class Task extends EventEmitter<TaskEvents> implements TaskLike {
@@ -413,7 +414,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 	private cloudSyncedMessageTimestamps: Set<number> = new Set()
 
 	// Initial status for the task's history item (set at creation time to avoid race conditions)
-	private readonly initialStatus?: "active" | "delegated" | "completed" | "interrupted"
+	private readonly initialStatus?: TaskHistoryStatus
 
 	// MessageManager for high-level message operations (lazy initialized)
 	private _messageManager?: MessageManager

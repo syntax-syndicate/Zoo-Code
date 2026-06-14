@@ -468,7 +468,7 @@ export class ClineProvider
 
 	// Removes and destroys the top Cline instance (the current finished task),
 	// activating the previous one (resuming the parent task).
-	async removeClineFromStack(options?: { skipDelegationRepair?: boolean }) {
+	async removeClineFromStack(options?: { skipChildInterruptMarking?: boolean }) {
 		const callerStack = new Error().stack
 
 		if (this.clineStack.length === 0) {
@@ -515,7 +515,7 @@ export class ClineProvider
 			// Skip when called from delegateParentAndOpenChild() during nested delegation
 			// transitions (A→B→C), where the caller intentionally replaces the active
 			// child and will update the parent to point at the new child.
-			if (parentTaskId && childTaskId && !options?.skipDelegationRepair) {
+			if (parentTaskId && childTaskId && !options?.skipChildInterruptMarking) {
 				try {
 					await this.runDelegationTransition(parentTaskId, async () => {
 						const { historyItem: parentHistory } = await this.getTaskWithId(parentTaskId)
@@ -3441,7 +3441,7 @@ export class ClineProvider
 		//    This ensures we never have >1 tasks open at any time during delegation.
 		//    Await abort completion to ensure clean disposal and prevent unhandled rejections.
 		try {
-			await this.removeClineFromStack({ skipDelegationRepair: true })
+			await this.removeClineFromStack({ skipChildInterruptMarking: true })
 		} catch (error) {
 			this.log(
 				`[delegateParentAndOpenChild] Error during parent disposal (non-fatal): ${
@@ -3501,7 +3501,7 @@ export class ClineProvider
 				}`,
 			)
 			try {
-				await this.removeClineFromStack({ skipDelegationRepair: true })
+				await this.removeClineFromStack({ skipChildInterruptMarking: true })
 			} catch (cleanupError) {
 				this.log(
 					`[delegateParentAndOpenChild] Failed to close paused child ${child.taskId} during rollback: ${
@@ -3724,7 +3724,7 @@ export class ClineProvider
 			//    overwrite a "completed" status set earlier.
 			const current = this.getCurrentTask()
 			if (current?.taskId === childTaskId) {
-				await this.removeClineFromStack({ skipDelegationRepair: true })
+				await this.removeClineFromStack({ skipChildInterruptMarking: true })
 			}
 
 			// 5) Update child metadata to "completed" status.

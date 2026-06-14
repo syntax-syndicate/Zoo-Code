@@ -5,6 +5,7 @@ import type { RooCodeSettings } from "./global-settings.js"
 import type { ClineMessage, QueuedMessage, TokenUsage } from "./message.js"
 import type { ToolUsage, ToolName } from "./tool.js"
 import type { TodoItem } from "./todo.js"
+import type { TaskHistoryStatus } from "./history.js"
 
 /**
  * TaskProviderLike
@@ -90,7 +91,7 @@ export interface CreateTaskOptions {
 	experiments?: Record<string, boolean>
 	initialTodos?: TodoItem[]
 	/** Initial status for the task's history item (e.g., "active" for child tasks, "interrupted" for cancelled subtasks) */
-	initialStatus?: "active" | "delegated" | "completed" | "interrupted"
+	initialStatus?: TaskHistoryStatus
 	/** Whether to start the task loop immediately (default: true).
 	 *  When false, the caller must invoke `task.start()` manually. */
 	startTask?: boolean

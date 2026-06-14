@@ -4,6 +4,9 @@ import { z } from "zod"
  * HistoryItem
  */
 
+export const TASK_STATUSES = ["active", "completed", "delegated", "interrupted"] as const
+export type TaskHistoryStatus = (typeof TASK_STATUSES)[number]
+
 export const historyItemSchema = z.object({
 	id: z.string(),
 	rootTaskId: z.string().optional(),
@@ -20,7 +23,7 @@ export const historyItemSchema = z.object({
 	workspace: z.string().optional(),
 	mode: z.string().optional(),
 	apiConfigName: z.string().optional(), // Provider profile name for sticky profile feature
-	status: z.enum(["active", "completed", "delegated", "interrupted"]).optional(),
+	status: z.enum(TASK_STATUSES).optional(),
 	delegatedToId: z.string().optional(), // Last child this parent delegated to
 	childIds: z.array(z.string()).optional(), // All children spawned by this task
 	awaitingChildId: z.string().optional(), // Child currently awaited (set when delegated)

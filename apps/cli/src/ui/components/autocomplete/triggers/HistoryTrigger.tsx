@@ -1,6 +1,8 @@
 import { Box, Text } from "ink"
 import fuzzysort from "fuzzysort"
 
+import type { TaskHistoryStatus } from "@roo-code/types"
+
 import type { AutocompleteTrigger, AutocompleteItem, TriggerDetectionResult } from "../types.js"
 
 /**
@@ -21,7 +23,7 @@ export interface HistoryResult extends AutocompleteItem {
 	/** Mode the task was run in */
 	mode?: string
 	/** Task status */
-	status?: "active" | "completed" | "delegated" | "interrupted"
+	status?: TaskHistoryStatus
 }
 
 /**
@@ -178,7 +180,7 @@ export function toHistoryResult(item: {
 	totalCost?: number
 	workspace?: string
 	mode?: string
-	status?: "active" | "completed" | "delegated" | "interrupted"
+	status?: TaskHistoryStatus
 }): HistoryResult {
 	return {
 		key: item.id, // Use task ID as the unique key

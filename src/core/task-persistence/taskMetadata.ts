@@ -1,7 +1,7 @@
 import NodeCache from "node-cache"
 import getFolderSize from "get-folder-size"
 
-import type { ClineMessage, HistoryItem } from "@roo-code/types"
+import type { ClineMessage, HistoryItem, TaskHistoryStatus } from "@roo-code/types"
 
 import { combineApiRequests } from "../../shared/combineApiRequests"
 import { combineCommandSequences } from "../../shared/combineCommandSequences"
@@ -24,7 +24,7 @@ export type TaskMetadataOptions = {
 	/** Provider profile name for the task (sticky profile feature) */
 	apiConfigName?: string
 	/** Initial status for the task (e.g., "active" for child tasks, "interrupted" for cancelled subtasks) */
-	initialStatus?: "active" | "delegated" | "completed" | "interrupted"
+	initialStatus?: TaskHistoryStatus
 }
 
 export async function taskMetadata({

@@ -1,4 +1,4 @@
-import type { ClineAsk, ClineSay, TodoItem } from "@roo-code/types"
+import type { ClineAsk, ClineSay, TaskHistoryStatus, TodoItem } from "@roo-code/types"
 
 export type MessageRole = "system" | "user" | "assistant" | "tool" | "thinking"
 
@@ -109,7 +109,7 @@ export interface TaskHistoryItem {
 	totalCost?: number
 	workspace?: string
 	mode?: string
-	status?: "active" | "completed" | "delegated" | "interrupted"
+	status?: TaskHistoryStatus
 	tokensIn?: number
 	tokensOut?: number
 }

@@ -1,7 +1,7 @@
 import * as fs from "fs/promises"
 import * as path from "path"
 
-import type { HistoryItem } from "@roo-code/types"
+import { TASK_STATUSES, type HistoryItem } from "@roo-code/types"
 
 const HISTORY_ITEM_FILENAME = "history_item.json"
 const HISTORY_INDEX_FILENAME = "_index.json"
@@ -41,7 +41,9 @@ function extractSessionEntry(value: unknown): TaskSessionEntry | undefined {
 		ts,
 		workspace: typeof workspace === "string" ? workspace : undefined,
 		mode: typeof mode === "string" ? mode : undefined,
-		status: status === "active" || status === "completed" || status === "delegated" ? status : undefined,
+		status: (TASK_STATUSES as readonly string[]).includes(status as string)
+			? (status as HistoryItem["status"])
+			: undefined,
 	}
 }
 
