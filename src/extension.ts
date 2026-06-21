@@ -1,6 +1,7 @@
 import * as vscode from "vscode"
 import * as dotenvx from "@dotenvx/dotenvx"
 import * as fs from "fs"
+import * as os from "os"
 import * as path from "path"
 
 // Load environment variables from .env file
@@ -24,6 +25,7 @@ import { customToolRegistry } from "@roo-code/core"
 
 import "./utils/path" // Necessary to have access to String.prototype.toPosix.
 import { createOutputChannelLogger, createDualLogger } from "./utils/outputChannelLogger"
+import { RemoteBridgeHost, resolveBridgeModulePath } from "./services/remote-bridge/RemoteBridgeHost"
 import { initializeNetworkProxy } from "./utils/networkProxy"
 
 import { Package } from "./shared/package"
@@ -63,6 +65,7 @@ import { initZooCodeAuth } from "./services/zoo-code-auth"
 let outputChannel: vscode.OutputChannel
 let extensionContext: vscode.ExtensionContext
 let cloudService: CloudService | undefined
+let remoteBridgeHost: RemoteBridgeHost | undefined
 
 let authStateChangedHandler: ((data: { state: AuthState; previousState: AuthState }) => Promise<void>) | undefined
 let settingsUpdatedHandler: (() => void) | undefined
@@ -299,8 +302,22 @@ export async function activate(context: vscode.ExtensionContext) {
 	vscode.commands.executeCommand(`${Package.name}.activationCompleted`)
 
 	// Implements the `RooCodeAPI` interface.
-	const socketPath = process.env.ROO_CODE_IPC_SOCKET_PATH
-	const enableLogging = typeof socketPath === "string"
+	//
+	// The IPC server starts when either:
+	//  - `zoo-code.remoteControl.enabled` is on, or
+	//  - the legacy `ROO_CODE_IPC_SOCKET_PATH` env var is set.
+	// The bridge process is forked only when the setting is on (the env var
+	// alone is for headless/CLI use and does not auto-fork the bridge).
+	const remoteControlConfig = vscode.workspace.getConfiguration("zoo-code.remoteControl")
+	const remoteControlEnabled = Boolean(remoteControlConfig.get<boolean>("enabled"))
+	const configuredSocketPath = remoteControlConfig.get<string>("socketPath") ?? ""
+	const envSocketPath = process.env.ROO_CODE_IPC_SOCKET_PATH
+
+	const socketPath =
+		configuredSocketPath || envSocketPath || path.join(os.tmpdir(), `zoo-code-${os.userInfo().uid}.sock`)
+	const ipcEnabled = remoteControlEnabled || typeof envSocketPath === "string"
+	const enableLogging = ipcEnabled
+	const effectiveSocketPath = ipcEnabled ? socketPath : undefined
 
 	// Watch the core files and automatically reload the extension host.
 	if (process.env.NODE_ENV === "development") {
@@ -357,7 +374,74 @@ export async function activate(context: vscode.ExtensionContext) {
 	// Initialize background model cache refresh
 	initializeModelCacheRefresh()
 
-	return new API(outputChannel, provider, socketPath, enableLogging)
+	const api = new API(outputChannel, provider, effectiveSocketPath, enableLogging)
+
+	// Fork the remote bridge process when Remote Control is enabled.
+	if (remoteControlEnabled && effectiveSocketPath) {
+		startRemoteBridge(context, outputChannel, effectiveSocketPath)
+	}
+
+	// Hot-toggle Remote Control without restarting the extension host.
+	context.subscriptions.push(
+		vscode.workspace.onDidChangeConfiguration((e) => {
+			if (!e.affectsConfiguration("zoo-code.remoteControl")) {
+				return
+			}
+
+			const config = vscode.workspace.getConfiguration("zoo-code.remoteControl")
+			const enabled = Boolean(config.get<boolean>("enabled"))
+			const newSocketPath = config.get<string>("socketPath") ?? ""
+			const resolvedSocketPath =
+				newSocketPath || envSocketPath || path.join(os.tmpdir(), `zoo-code-${os.userInfo().uid}.sock`)
+
+			if (enabled && resolvedSocketPath) {
+				if (
+					remoteBridgeHost &&
+					remoteBridgeHost.socketPath === resolvedSocketPath &&
+					remoteBridgeHost.isRunning
+				) {
+					return
+				}
+
+				startRemoteBridge(context, outputChannel, resolvedSocketPath)
+			} else {
+				if (remoteBridgeHost) {
+					remoteBridgeHost.stop()
+					remoteBridgeHost = undefined
+				}
+			}
+		}),
+	)
+
+	return api
+}
+
+/**
+ * Fork the remote bridge process (issue #650, Phase 1). The bridge connects to
+ * the extension's IPC server over the Unix socket and streams TaskEvents. If a
+ * host is already running it is restarted against the (possibly new) socket.
+ */
+function startRemoteBridge(
+	context: vscode.ExtensionContext,
+	outputChannel: vscode.OutputChannel,
+	socketPath: string,
+): void {
+	const bridgeModulePath = resolveBridgeModulePath(context.asAbsolutePath("dist"))
+
+	if (remoteBridgeHost) {
+		remoteBridgeHost.dispose()
+		remoteBridgeHost = undefined
+	}
+
+	remoteBridgeHost = new RemoteBridgeHost({
+		bridgeModulePath,
+		log: createOutputChannelLogger(outputChannel),
+	})
+
+	remoteBridgeHost.start(socketPath)
+
+	// Ensure the bridge is torn down with the extension host.
+	context.subscriptions.push({ dispose: () => remoteBridgeHost?.dispose() })
 }
 
 // This method is called when your extension is deactivated.
@@ -385,6 +469,9 @@ export async function deactivate() {
 			)
 		}
 	}
+
+	remoteBridgeHost?.dispose()
+	remoteBridgeHost = undefined
 
 	await McpServerManager.cleanup(extensionContext)
 	TelemetryService.instance.shutdown()

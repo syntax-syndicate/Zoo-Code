@@ -138,13 +138,30 @@ async function main() {
 		outdir: "dist/workers",
 	}
 
-	const [extensionCtx, workerCtx] = await Promise.all([
+	// The remote bridge is a standalone forked Node process (see issue #650).
+	// It is bundled separately so the extension can `child_process.fork` it
+	// from `dist/remote-bridge/main.js` when `zoo-code.remoteControl.enabled`
+	// is on. node-ipc and the @roo-code/* workspace deps are bundled in.
+	/**
+	 * @type {import('esbuild').BuildOptions}
+	 */
+	const bridgeConfig = {
+		...buildOptions,
+		entryPoints: ["../packages/remote-bridge/src/main.ts"],
+		outdir: "dist/remote-bridge",
+		// The bridge runs as its own process, not in the extension host, so it
+		// must not be treated as part of the extension bundle.
+		external: [...(buildOptions.external ?? []), "vscode"],
+	}
+
+	const [extensionCtx, workerCtx, bridgeCtx] = await Promise.all([
 		esbuild.context(extensionConfig),
 		esbuild.context(workerConfig),
+		esbuild.context(bridgeConfig),
 	])
 
 	if (watch) {
-		await Promise.all([extensionCtx.watch(), workerCtx.watch()])
+		await Promise.all([extensionCtx.watch(), workerCtx.watch(), bridgeCtx.watch()])
 		copyLocales(srcDir, distDir)
 		setupLocaleWatcher(srcDir, distDir)
 	} else {
@@ -152,7 +169,8 @@ async function main() {
 		// onEnd hooks copy the same asset directories concurrently.
 		await extensionCtx.rebuild()
 		await workerCtx.rebuild()
-		await Promise.all([extensionCtx.dispose(), workerCtx.dispose()])
+		await bridgeCtx.rebuild()
+		await Promise.all([extensionCtx.dispose(), workerCtx.dispose(), bridgeCtx.dispose()])
 	}
 }
 

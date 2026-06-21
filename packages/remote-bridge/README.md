@@ -4,9 +4,10 @@ A forked Node.js process that connects to the Zoo Code extension's IPC **API sur
 
 ## What Phase 1 does
 
-- Spawns as a standalone Node process (forked from the extension in later phases).
+- Spawns as a standalone Node process, **forked from the extension** when `zoo-code.remoteControl.enabled` is on.
 - Connects to the extension's [`IpcServer`](../ipc/src/ipc-server.ts) using the same [`IpcClient`](../ipc/src/ipc-client.ts) the CLI uses.
 - Can issue any [`TaskCommand`](../../packages/types/src/ipc.ts) (e.g. `GetModes`, `GetCommands`, `SendMessage`) and receive the resulting [`TaskEvent`](../../packages/types/src/events.ts) responses.
+- In `--serve` mode (the mode the extension forks), stays connected and streams every `TaskEvent` to stdout as newline-delimited JSON. Phase 2 will replace this stdout line with a WebRTC data channel write.
 - Proves the round-trip works via an integration test that stands up a real `IpcServer` and runs an API call through the `Bridge`.
 
 What it does **not** do yet (later phases): WebRTC data channel, signaling, remote UI, push notifications.
@@ -22,7 +23,7 @@ What it does **not** do yet (later phases): WebRTC data channel, signaling, remo
 └──────────────────────┘                   └──────────────────────┘
 ```
 
-The socket path is the same one the extension already reads: the `ROO_CODE_IPC_SOCKET_PATH` environment variable. The extension only starts its IPC server when that variable is set, so the bridge is opt-in.
+The socket path is the same one the extension already reads: the `ROO_CODE_IPC_SOCKET_PATH` environment variable. The extension starts its IPC server when either `zoo-code.remoteControl.enabled` is on **or** `ROO_CODE_IPC_SOCKET_PATH` is set, so the bridge is opt-in. The bridge process itself is only auto-forked when the setting is on (the env var alone is for headless/CLI use and does not auto-fork).
 
 ## Usage
 
@@ -59,14 +60,26 @@ pnpm --filter @roo-code/remote-bridge start -- --socket /tmp/zoo-code.sock --com
 
 The response event is pretty-printed to stdout; diagnostic logs go to stderr.
 
+## Enabling from Zoo Code preferences
+
+Toggle **Settings → Zoo Code → Remote Control: Enabled** (`zoo-code.remoteControl.enabled`). When on, the extension:
+
+1. Starts its `IpcServer` on the configured socket (`zoo-code.remoteControl.socketPath`, or a per-user default under the system temp dir; `ROO_CODE_IPC_SOCKET_PATH` overrides if set).
+2. Forks this bridge in `--serve` mode against that socket via [`RemoteBridgeHost`](../../src/services/remote-bridge/RemoteBridgeHost.ts), with crash-restart backoff.
+3. Hot-toggles without a restart via a config-change listener in [`src/extension.ts`](../../src/extension.ts).
+
+The bridge is bundled into the extension VSIX at `dist/remote-bridge/main.js` by [`src/esbuild.mjs`](../../src/esbuild.mjs).
+
 ## Scripts
 
-| Script             | Description                                                      |
-| ------------------ | ---------------------------------------------------------------- |
-| `pnpm test`        | Run the vitest integration tests (stands up a real `IpcServer`). |
-| `pnpm check-types` | `tsc --noEmit`.                                                  |
-| `pnpm lint`        | ESLint.                                                          |
-| `pnpm start`       | Run the CLI entry point via `tsx`.                               |
+| Script             | Description                                                                          |
+| ------------------ | ------------------------------------------------------------------------------------ |
+| `pnpm test`        | Run the vitest integration tests (stands up a real `IpcServer`).                     |
+| `pnpm check-types` | `tsc --noEmit`.                                                                      |
+| `pnpm lint`        | ESLint.                                                                              |
+| `pnpm start`       | Run the one-shot CLI entry point via `tsx`.                                          |
+| `pnpm demo`        | Fork the one-shot bridge against a mock server (live API call).                      |
+| `pnpm demo:serve`  | Fork the bundled bridge in `--serve` mode against a mock server and stream an event. |
 
 ## Tests
 

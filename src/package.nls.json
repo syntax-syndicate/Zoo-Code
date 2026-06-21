@@ -48,5 +48,7 @@
 	"settings.debugProxy.tlsInsecure.description": "Accept self-signed certificates from the proxy. **Required for MITM inspection.** ⚠️ Insecure — only use for local debugging.",
 	"settings.workspace.rootResolution.description": "How Zoo resolves the workspace root in a multi-root workspace. The root is used to locate `.roomodes`, `.roo/mcp.json`, `.roo/rules/`, and other project-scoped configuration. Changing this setting only affects future lookups; running tasks keep their original root.",
 	"settings.workspace.rootResolution.activeEditor.description": "Use the workspace folder containing the active editor; fall back to the first workspace folder. (Default — preserves legacy behavior.)",
-	"settings.workspace.rootResolution.firstFolder.description": "Always use the first workspace folder (workspaceFolders[0]). Deterministic — independent of which file is currently focused."
+	"settings.workspace.rootResolution.firstFolder.description": "Always use the first workspace folder (workspaceFolders[0]). Deterministic — independent of which file is currently focused.",
+	"settings.remoteControl.enabled.description": "**Enable Remote Control** — Starts the IPC server and forks a background bridge process so Zoo Code's task stream and approval flow can be reached from another device. Opt-in: no socket is opened and no process is forked unless this is on. Changes apply without restarting.",
+	"settings.remoteControl.socketPath.description": "Unix socket path the IPC server listens on and the bridge connects to. Leave blank to use a per-user default under the system temp directory (`$ROO_CODE_IPC_SOCKET_PATH` overrides this if set). Only used when **Remote Control** is enabled."
 }

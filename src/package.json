@@ -434,6 +434,20 @@
 					"scope": "machine",
 					"description": "%settings.workspace.rootResolution.description%",
 					"markdownDescription": "%settings.workspace.rootResolution.description%"
+				},
+				"zoo-code.remoteControl.enabled": {
+					"type": "boolean",
+					"default": false,
+					"scope": "machine",
+					"description": "%settings.remoteControl.enabled.description%",
+					"markdownDescription": "%settings.remoteControl.enabled.description%"
+				},
+				"zoo-code.remoteControl.socketPath": {
+					"type": "string",
+					"default": "",
+					"scope": "machine",
+					"description": "%settings.remoteControl.socketPath.description%",
+					"markdownDescription": "%settings.remoteControl.socketPath.description%"
 				}
 			}
 		}

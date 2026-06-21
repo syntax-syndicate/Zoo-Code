@@ -11,6 +11,7 @@
 		"test": "vitest run",
 		"start": "tsx src/main.ts",
 		"demo": "tsx scripts/demo.ts",
+		"demo:serve": "tsx scripts/serve-demo.ts",
 		"clean": "rimraf .turbo"
 	},
 	"dependencies": {
