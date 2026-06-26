@@ -3552,7 +3552,11 @@ export class ClineProvider
 				}`,
 			)
 			try {
-				await this.removeClineFromStack({ skipDelegationRepair: true })
+				// Only pop the stack if the child we just created is still on top.
+				// A concurrent delegation could have pushed another child since we created ours.
+				if (this.getCurrentTask()?.taskId === child.taskId) {
+					await this.removeClineFromStack({ skipDelegationRepair: true })
+				}
 			} catch (cleanupError) {
 				this.log(
 					`[delegateParentAndOpenChild] Failed to close paused child ${child.taskId} during rollback: ${
@@ -3757,6 +3761,9 @@ export class ClineProvider
 
 			// 3) Persist parent metadata before closing the child. If persistence fails,
 			//    the delegated child remains active and can retry completion.
+			//    NOTE: steps 3 and 5 are still two separate writes — this is a known gap
+			//    (reviewed finding #3). Story 2.2 (#365) will replace them with a single
+			//    atomicUpdatePair() call so no intermediate state is ever persisted.
 			const childIds = Array.from(new Set([...(historyItem.childIds ?? []), childTaskId]))
 			if (historyItem.status !== "active") {
 				assertValidTransition(historyItem.status, "active")
