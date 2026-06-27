@@ -75,7 +75,7 @@
 	},
 	"semble": {
 		"downloadingBinary": "Đang tải xuống tệp nhị phân semble...",
-		"ready": "Semble đã sẵn sàng. Tìm kiếm được lập chỉ mục tức thì.",
+		"ready": "Semble {{version}} đã sẵn sàng. Tìm kiếm được lập chỉ mục tức thì.",
 		"unsupportedPlatform": "Semble không được hỗ trợ trên nền tảng này ({{platform}}-{{arch}}).",
 		"downloadFailed": "Tải xuống semble thất bại: {{errorMessage}}",
 		"checkFailed": "Kiểm tra semble thất bại: {{errorMessage}}",

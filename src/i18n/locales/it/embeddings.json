@@ -75,7 +75,7 @@
 	},
 	"semble": {
 		"downloadingBinary": "Download del binario semble in corso...",
-		"ready": "Semble è pronto. Le ricerche vengono indicizzate al volo.",
+		"ready": "Semble {{version}} è pronto. Le ricerche vengono indicizzate al volo.",
 		"unsupportedPlatform": "Semble non è supportato su questa piattaforma ({{platform}}-{{arch}}).",
 		"downloadFailed": "Download di semble fallito: {{errorMessage}}",
 		"checkFailed": "Verifica di semble fallita: {{errorMessage}}",

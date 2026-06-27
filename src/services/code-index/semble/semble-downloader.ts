@@ -20,7 +20,11 @@ const SEMBLE_ARCHIVES: Record<string, { archive: string; binary: string }> = {
 	"win32-x64": { archive: "semble-windows-x64-fast.zip", binary: "semble.exe" },
 }
 
-const SEMBLE_VERSION = "v0.4.1"
+/**
+ * The bundled semble version. Surfaced to the UI via the provider's
+ * system-state message so users can see which version is active.
+ */
+export const SEMBLE_VERSION = "v0.4.1"
 const DOWNLOAD_BASE_URL = `https://github.com/Zoo-Code-Org/sembleexec/releases/download/${SEMBLE_VERSION}`
 const VERSION_FILE = ".semble-version"
 

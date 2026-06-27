@@ -5,7 +5,7 @@ import { IndexingState } from "../interfaces/manager"
 import { VectorStoreSearchResult } from "../interfaces/vector-store"
 import { CodeIndexStateManager } from "../state-manager"
 import { SembleCLI } from "./semble-cli"
-import { downloadSemble, isSembleSupportedPlatform } from "./semble-downloader"
+import { downloadSemble, isSembleSupportedPlatform, SEMBLE_VERSION } from "./semble-downloader"
 import { ISembleProvider, SembleConfig, SembleContentType, SembleSearchResult, SEMBLE_DEFAULTS } from "./types"
 import { TelemetryService } from "@roo-code/telemetry"
 import { TelemetryEventName } from "@roo-code/types"
@@ -121,9 +121,11 @@ export class SembleProvider implements ISembleProvider {
 
 		console.log("[SembleProvider] Semble found and ready.")
 
-		// Semble indexes on-the-fly, so we mark as "Indexed" (ready for search)
+		// Semble indexes on-the-fly, so we mark as "Indexed" (ready for search).
+		// The version is included in the status message so the UI (CodeIndexPopover)
+		// surfaces which semble release is active.
 		this._state = "Indexed"
-		this.stateManager.setSystemState("Indexed", t("embeddings:semble.ready"))
+		this.stateManager.setSystemState("Indexed", t("embeddings:semble.ready", { version: SEMBLE_VERSION }))
 
 		this._isInitialized = true
 	}
@@ -144,7 +146,7 @@ export class SembleProvider implements ISembleProvider {
 		// Semble indexes on-the-fly — no separate indexing step needed.
 		// Mark as indexed/ready.
 		this._state = "Indexed"
-		this.stateManager.setSystemState("Indexed", t("embeddings:semble.ready"))
+		this.stateManager.setSystemState("Indexed", t("embeddings:semble.ready", { version: SEMBLE_VERSION }))
 	}
 
 	/**

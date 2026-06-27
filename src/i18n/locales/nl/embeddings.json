@@ -75,7 +75,7 @@
 	},
 	"semble": {
 		"downloadingBinary": "Semble-binary downloaden...",
-		"ready": "Semble is klaar. Zoekopdrachten worden direct geïndexeerd.",
+		"ready": "Semble {{version}} is klaar. Zoekopdrachten worden direct geïndexeerd.",
 		"unsupportedPlatform": "Semble wordt niet ondersteund op dit platform ({{platform}}-{{arch}}).",
 		"downloadFailed": "Downloaden van semble mislukt: {{errorMessage}}",
 		"checkFailed": "Semble-controle mislukt: {{errorMessage}}",

@@ -75,7 +75,7 @@
 	},
 	"semble": {
 		"downloadingBinary": "Загрузка бинарного файла semble...",
-		"ready": "Semble готов. Поиск индексируется на лету.",
+		"ready": "Semble {{version}} готов. Поиск индексируется на лету.",
 		"unsupportedPlatform": "Semble не поддерживается на этой платформе ({{platform}}-{{arch}}).",
 		"downloadFailed": "Не удалось загрузить semble: {{errorMessage}}",
 		"checkFailed": "Проверка semble не удалась: {{errorMessage}}",

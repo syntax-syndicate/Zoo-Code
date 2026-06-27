@@ -75,7 +75,7 @@
 	},
 	"semble": {
 		"downloadingBinary": "Downloading semble binary...",
-		"ready": "Semble is ready. Searches index on-the-fly.",
+		"ready": "Semble {{version}} is ready. Searches index on-the-fly.",
 		"unsupportedPlatform": "Semble is not supported on this platform ({{platform}}-{{arch}}).",
 		"downloadFailed": "Failed to download semble: {{errorMessage}}",
 		"checkFailed": "Semble check failed: {{errorMessage}}",

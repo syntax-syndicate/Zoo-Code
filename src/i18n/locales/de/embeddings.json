@@ -75,7 +75,7 @@
 	},
 	"semble": {
 		"downloadingBinary": "Semble-Binary wird heruntergeladen...",
-		"ready": "Semble ist bereit. Suchen erfolgen spontan.",
+		"ready": "Semble {{version}} ist bereit. Suchen erfolgen spontan.",
 		"unsupportedPlatform": "Semble wird auf dieser Plattform nicht unterstützt ({{platform}}-{{arch}}).",
 		"downloadFailed": "Fehler beim Herunterladen von Semble: {{errorMessage}}",
 		"checkFailed": "Semble-Überprüfung fehlgeschlagen: {{errorMessage}}",

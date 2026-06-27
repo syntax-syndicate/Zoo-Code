@@ -75,7 +75,7 @@
 	},
 	"semble": {
 		"downloadingBinary": "正在下載 semble 二進位檔...",
-		"ready": "Semble 已就緒。搜尋即時建立索引。",
+		"ready": "Semble {{version}} 已就緒。搜尋即時建立索引。",
 		"unsupportedPlatform": "此平台不支援 Semble ({{platform}}-{{arch}})。",
 		"downloadFailed": "下載 semble 失敗：{{errorMessage}}",
 		"checkFailed": "Semble 檢查失敗：{{errorMessage}}",

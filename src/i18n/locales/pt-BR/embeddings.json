@@ -75,7 +75,7 @@
 	},
 	"semble": {
 		"downloadingBinary": "Baixando o binário do semble...",
-		"ready": "Semble está pronto. As buscas são indexadas em tempo real.",
+		"ready": "Semble {{version}} está pronto. As buscas são indexadas em tempo real.",
 		"unsupportedPlatform": "Semble não é suportado nesta plataforma ({{platform}}-{{arch}}).",
 		"downloadFailed": "Falha ao baixar semble: {{errorMessage}}",
 		"checkFailed": "Verificação do semble falhou: {{errorMessage}}",

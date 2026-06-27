@@ -75,7 +75,7 @@
 	},
 	"semble": {
 		"downloadingBinary": "semble ikili dosyası indiriliyor...",
-		"ready": "Semble hazır. Aramalar anında indekslenir.",
+		"ready": "Semble {{version}} hazır. Aramalar anında indekslenir.",
 		"unsupportedPlatform": "Semble bu platformda desteklenmiyor ({{platform}}-{{arch}}).",
 		"downloadFailed": "semble indirilemedi: {{errorMessage}}",
 		"checkFailed": "Semble kontrolü başarısız: {{errorMessage}}",

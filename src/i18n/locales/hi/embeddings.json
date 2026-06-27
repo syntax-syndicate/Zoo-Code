@@ -75,7 +75,7 @@
 	},
 	"semble": {
 		"downloadingBinary": "semble बाइनरी डाउनलोड हो रहा है...",
-		"ready": "Semble तैयार है। खोजें ऑन-द-फ्लाई इंडेक्स होती हैं।",
+		"ready": "Semble {{version}} तैयार है। खोजें ऑन-द-फ्लाई इंडेक्स होती हैं।",
 		"unsupportedPlatform": "इस प्लेटफ़ॉर्म पर Semble समर्थित नहीं है ({{platform}}-{{arch}})।",
 		"downloadFailed": "semble डाउनलोड करने में विफल: {{errorMessage}}",
 		"checkFailed": "Semble जाँच विफल: {{errorMessage}}",

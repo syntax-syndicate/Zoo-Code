@@ -75,7 +75,7 @@
 	},
 	"semble": {
 		"downloadingBinary": "Descarregant el binari de semble...",
-		"ready": "Semble està llest. Les cerques s'indexen sobre la marxa.",
+		"ready": "Semble {{version}} està llest. Les cerques s'indexen sobre la marxa.",
 		"unsupportedPlatform": "Semble no és compatible amb aquesta plataforma ({{platform}}-{{arch}}).",
 		"downloadFailed": "Error en descarregar semble: {{errorMessage}}",
 		"checkFailed": "Comprovació de semble fallida: {{errorMessage}}",

@@ -21,6 +21,7 @@ vi.mock("../semble-cli", () => ({
 vi.mock("../semble-downloader", () => ({
 	isSembleSupportedPlatform: vi.fn().mockReturnValue(true),
 	downloadSemble: vi.fn().mockResolvedValue("/mock/storage/semble/semble"),
+	SEMBLE_VERSION: "v0.4.1",
 }))
 
 // Mock TelemetryService
@@ -45,7 +46,7 @@ vi.mock("../../../../i18n", () => ({
 			case "embeddings:semble.downloadingBinary":
 				return "Downloading semble binary..."
 			case "embeddings:semble.ready":
-				return "Semble is ready. Searches index on-the-fly."
+				return `Semble ${params?.version ?? ""} is ready. Searches index on-the-fly.`
 			case "embeddings:semble.unsupportedPlatform":
 				return `Semble is not supported on this platform (${params?.platform ?? ""}-${params?.arch ?? ""}).`
 			case "embeddings:semble.downloadFailed":
@@ -113,7 +114,7 @@ describe("SembleProvider", () => {
 			expect(provider.state).toBe("Indexed")
 			expect(mockStateManager.setSystemState).toHaveBeenCalledWith(
 				"Indexed",
-				"Semble is ready. Searches index on-the-fly.",
+				"Semble v0.4.1 is ready. Searches index on-the-fly.",
 			)
 		})
 
@@ -163,6 +164,16 @@ describe("SembleProvider", () => {
 			await provider.initialize()
 
 			expect(mockCli.checkInstalled).toHaveBeenCalledTimes(1)
+		})
+
+		it("should include the semble version in the ready status message", async () => {
+			mockCli.checkInstalled.mockResolvedValue({ installed: true })
+
+			await provider.initialize()
+
+			// The ready message interpolates the active SEMBLE_VERSION so the UI
+			// (CodeIndexPopover) surfaces which release is installed.
+			expect(mockStateManager.setSystemState).toHaveBeenCalledWith("Indexed", expect.stringContaining("v0.4.1"))
 		})
 	})
 

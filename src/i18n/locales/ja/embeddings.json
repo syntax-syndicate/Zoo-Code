@@ -75,7 +75,7 @@
 	},
 	"semble": {
 		"downloadingBinary": "sembleバイナリをダウンロード中...",
-		"ready": "Sembleの準備ができました。検索はその場でインデックス化されます。",
+		"ready": "Semble {{version}}の準備ができました。検索はその場でインデックス化されます。",
 		"unsupportedPlatform": "このプラットフォームではSembleはサポートされていません ({{platform}}-{{arch}})。",
 		"downloadFailed": "sembleのダウンロードに失敗しました: {{errorMessage}}",
 		"checkFailed": "Sembleの確認に失敗しました: {{errorMessage}}",
