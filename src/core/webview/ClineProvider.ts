@@ -3758,32 +3758,28 @@ export class ClineProvider
 
 			// 3+5) Atomically mark child completed and parent active in one lock acquisition.
 			//      No intermediate state is ever persisted — no sentinel needed.
-			const childIds = Array.from(new Set([...(historyItem.childIds ?? []), childTaskId]))
-			const updatedHistory: typeof historyItem = {
-				...historyItem,
-				status: "active" as const,
-				completedByChildId: childTaskId,
-				completionResultSummary,
-				awaitingChildId: undefined,
-				childIds,
-			}
-			try {
-				await this.taskHistoryStore.atomicUpdatePair(
-					childTaskId,
-					parentTaskId,
-					(child) => ({ ...child, status: "completed" as const }),
-					(parent) => ({ ...parent, ...updatedHistory }),
-				)
-				this.recentTasksCache = undefined
-			} catch (err) {
-				this.log(
-					`[reopenParentFromDelegation] Failed to persist child completed status for ${childTaskId}: ${
-						(err as Error)?.message ?? String(err)
-					}`,
-				)
-				// Fall back: at least persist the parent so it can resume.
-				await this.updateTaskHistory(updatedHistory)
-			}
+			//      Build the parent update inside the updater from the locked snapshot so
+			//      any concurrent write that landed between step 1 and the lock acquisition
+			//      is preserved rather than silently overwritten.
+			let updatedHistory!: typeof historyItem
+			await this.taskHistoryStore.atomicUpdatePair(
+				childTaskId,
+				parentTaskId,
+				(child) => ({ ...child, status: "completed" as const }),
+				(parent) => {
+					const childIds = Array.from(new Set([...(parent.childIds ?? []), childTaskId]))
+					updatedHistory = {
+						...parent,
+						status: "active" as const,
+						completedByChildId: childTaskId,
+						completionResultSummary,
+						awaitingChildId: undefined,
+						childIds,
+					}
+					return updatedHistory
+				},
+			)
+			this.recentTasksCache = undefined
 
 			// 6) Emit TaskDelegationCompleted (provider-level)
 			try {

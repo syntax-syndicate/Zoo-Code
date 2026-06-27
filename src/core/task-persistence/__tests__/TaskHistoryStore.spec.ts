@@ -499,6 +499,46 @@ describe("TaskHistoryStore", () => {
 			expect(store.get("parent-concurrent")?.tokensOut).toBe(999)
 		})
 
+		it("throws when first updater returns a different id", async () => {
+			await store.initialize()
+
+			const child = makeHistoryItem({ id: "child-id-check" })
+			const parent = makeHistoryItem({ id: "parent-id-check" })
+			await store.upsert(child)
+			await store.upsert(parent)
+
+			await expect(
+				store.atomicUpdatePair(
+					"child-id-check",
+					"parent-id-check",
+					(c) => ({ ...c, id: "wrong-id" }),
+					(p) => p,
+				),
+			).rejects.toThrow(
+				"[TaskHistoryStore] atomicUpdatePair: first updater changed id from child-id-check to wrong-id",
+			)
+		})
+
+		it("throws when second updater returns a different id", async () => {
+			await store.initialize()
+
+			const child = makeHistoryItem({ id: "child-id-check2" })
+			const parent = makeHistoryItem({ id: "parent-id-check2" })
+			await store.upsert(child)
+			await store.upsert(parent)
+
+			await expect(
+				store.atomicUpdatePair(
+					"child-id-check2",
+					"parent-id-check2",
+					(c) => c,
+					(p) => ({ ...p, id: "wrong-id" }),
+				),
+			).rejects.toThrow(
+				"[TaskHistoryStore] atomicUpdatePair: second updater changed id from parent-id-check2 to wrong-id",
+			)
+		})
+
 		it("throws when first task ID is not in cache", async () => {
 			await store.initialize()
 
@@ -531,7 +571,7 @@ describe("TaskHistoryStore", () => {
 			).rejects.toThrow("[TaskHistoryStore] atomicUpdatePair: nonexistent-parent not found")
 		})
 
-		it("partial failure: first write lands, second throws — error surfaces and first write is NOT rolled back (known limitation)", async () => {
+		it("partial failure: first file write lands, second throws — error surfaces; cache unchanged (known disk/cache divergence)", async () => {
 			await store.initialize()
 
 			const child = makeHistoryItem({ id: "child-partial", status: "active", ts: 1000 })
@@ -539,13 +579,13 @@ describe("TaskHistoryStore", () => {
 			await store.upsert(child)
 			await store.upsert(parent)
 
-			let callCount = 0
+			let writeCallCount = 0
 			const storeAny = store as any
-			const originalUpsertCore = storeAny.upsertCore.bind(store)
-			vi.spyOn(storeAny, "upsertCore").mockImplementation(async (...args: unknown[]) => {
-				callCount++
-				if (callCount === 2) throw new Error("second upsertCore failed")
-				return originalUpsertCore(...args)
+			const originalWriteTaskFile = storeAny.writeTaskFile.bind(store)
+			vi.spyOn(storeAny, "writeTaskFile").mockImplementation(async (...args: unknown[]) => {
+				writeCallCount++
+				if (writeCallCount === 2) throw new Error("second writeTaskFile failed")
+				return originalWriteTaskFile(...args)
 			})
 
 			await expect(
@@ -555,21 +595,20 @@ describe("TaskHistoryStore", () => {
 					(c) => ({ ...c, status: "completed" as const }),
 					(p) => ({ ...p, status: "active" as const }),
 				),
-			).rejects.toThrow("second upsertCore failed")
+			).rejects.toThrow("second writeTaskFile failed")
 
-			// First write landed: child is completed on disk
+			// First file write landed on disk (known limitation — no rollback)
 			const childFile = path.join(tmpDir, "tasks", "child-partial", GlobalFileNames.historyItem)
 			const childDisk = JSON.parse(await fs.readFile(childFile, "utf8"))
 			expect(childDisk.status).toBe("completed")
 
-			// Second write did not land: parent remains delegated on disk
+			// Second file write did not land
 			const parentFile = path.join(tmpDir, "tasks", "parent-partial", GlobalFileNames.historyItem)
 			const parentDisk = JSON.parse(await fs.readFile(parentFile, "utf8"))
 			expect(parentDisk.status).toBe("delegated")
 
-			// In-memory cache reflects what actually landed (child updated, parent not)
-			// Note: child cache was updated by upsertCore before the second call threw
-			expect(store.get("child-partial")?.status).toBe("completed")
+			// Cache was NOT updated (cache set is deferred until after both writes succeed)
+			expect(store.get("child-partial")?.status).toBe("active")
 			expect(store.get("parent-partial")?.status).toBe("delegated")
 		})
 

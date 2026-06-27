@@ -652,15 +652,7 @@ describe("History resume delegation - parent metadata transitions", () => {
 		expect(parentInstance.resumeAfterDelegation).toHaveBeenCalledTimes(1)
 	})
 
-	it("reopenParentFromDelegation logs child status persistence failure and continues reopen flow (RPD-04)", async () => {
-		const logSpy = vi.fn()
-		const emitSpy = vi.fn()
-		const parentInstance = {
-			resumeAfterDelegation: vi.fn().mockResolvedValue(undefined),
-			overwriteClineMessages: vi.fn().mockResolvedValue(undefined),
-			overwriteApiConversationHistory: vi.fn().mockResolvedValue(undefined),
-		}
-
+	it("reopenParentFromDelegation propagates atomicUpdatePair failure — parent not reopened (RPD-04)", async () => {
 		const parentItem = {
 			id: "parent-rpd04",
 			status: "delegated",
@@ -672,52 +664,36 @@ describe("History resume delegation - parent metadata transitions", () => {
 			tokensOut: 0,
 			totalCost: 0,
 		}
-		const persistError = new Error("child status persist failed")
-		// atomicUpdatePair fails — triggers the fallback updateTaskHistory path
+		const persistError = new Error("atomic pair write failed")
 		const atomicUpdatePair = vi.fn().mockRejectedValue(persistError)
 		const taskHistoryStore = makeTaskHistoryStoreStub({ id: "child-rpd04", status: "active" }, parentItem, {
 			atomicUpdatePair,
 		})
-		const updateTaskHistory = vi.fn().mockResolvedValue([])
+		const createTaskWithHistoryItem = vi.fn()
 
 		const provider = makeProviderStub({
 			contextProxy: { globalStorageUri: { fsPath: "/tmp" } },
 			getTaskWithId: vi.fn().mockResolvedValue({ historyItem: parentItem }),
-			emit: emitSpy,
-			log: logSpy,
+			emit: vi.fn(),
 			getCurrentTask: vi.fn(() => ({ taskId: "child-rpd04" })),
 			removeClineFromStack: vi.fn().mockResolvedValue(undefined),
-			createTaskWithHistoryItem: vi.fn().mockResolvedValue(parentInstance),
+			createTaskWithHistoryItem,
 			taskHistoryStore,
-			updateTaskHistory,
 		} as any)
 
 		vi.mocked(readTaskMessages).mockResolvedValue([])
 		vi.mocked(readApiMessages).mockResolvedValue([])
 
+		// Failure propagates — child is closed (step 4 already ran) but parent is NOT reopened
 		await expect(
 			(ClineProvider.prototype as any).reopenParentFromDelegation.call(provider, {
 				parentTaskId: "parent-rpd04",
 				childTaskId: "child-rpd04",
 				completionResultSummary: "Child completion with persistence failure",
 			}),
-		).resolves.toBe(true)
+		).rejects.toThrow(persistError)
 
-		expect(logSpy).toHaveBeenCalledWith(
-			expect.stringContaining(
-				"[reopenParentFromDelegation] Failed to persist child completed status for child-rpd04:",
-			),
-		)
-		// Fallback: parent written via updateTaskHistory
-		expect(updateTaskHistory).toHaveBeenCalledWith(
-			expect.objectContaining({
-				id: "parent-rpd04",
-				status: "active",
-				completedByChildId: "child-rpd04",
-			}),
-		)
-		expect(parentInstance.resumeAfterDelegation).toHaveBeenCalledTimes(1)
-		expect(emitSpy).toHaveBeenCalledWith(RooCodeEventName.TaskDelegationResumed, "parent-rpd04", "child-rpd04")
+		expect(createTaskWithHistoryItem).not.toHaveBeenCalled()
 	})
 
 	it("reopenParentFromDelegation aborts parent reopen when all persistence paths fail (RPD-05)", async () => {
@@ -735,7 +711,7 @@ describe("History resume delegation - parent metadata transitions", () => {
 			tokensOut: 0,
 			totalCost: 0,
 		}
-		// Both atomicUpdatePair and fallback updateTaskHistory fail
+		// atomicUpdatePair failure aborts the reopen flow.
 		const atomicUpdatePair = vi.fn().mockRejectedValue(persistError)
 		const taskHistoryStore = makeTaskHistoryStoreStub({ id: "child-rpd05", status: "active" }, parentItem, {
 			atomicUpdatePair,

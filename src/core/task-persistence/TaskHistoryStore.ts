@@ -579,8 +579,29 @@ export class TaskHistoryStore {
 			const updatedFirst = firstUpdater(structuredClone(first))
 			const updatedSecond = secondUpdater(structuredClone(second))
 
-			await this.upsertCore(updatedFirst)
-			await this.upsertCore(updatedSecond)
+			if (updatedFirst.id !== firstId) {
+				throw new Error(
+					`[TaskHistoryStore] atomicUpdatePair: first updater changed id from ${firstId} to ${updatedFirst.id}`,
+				)
+			}
+			if (updatedSecond.id !== secondId) {
+				throw new Error(
+					`[TaskHistoryStore] atomicUpdatePair: second updater changed id from ${secondId} to ${updatedSecond.id}`,
+				)
+			}
+
+			// Merge with existing cache entries before writing, mirroring upsertCore.
+			const mergedFirst = { ...first, ...updatedFirst }
+			const mergedSecond = { ...second, ...updatedSecond }
+
+			// Write both files before touching the cache so readers never observe a
+			// half-updated in-memory state between the two await points.
+			await this.writeTaskFile(mergedFirst)
+			await this.writeTaskFile(mergedSecond)
+
+			// Both disk writes succeeded — now update the cache atomically.
+			this.cache.set(firstId, mergedFirst)
+			this.cache.set(secondId, mergedSecond)
 
 			this.scheduleIndexWrite()
 			const all = this.getAll()
