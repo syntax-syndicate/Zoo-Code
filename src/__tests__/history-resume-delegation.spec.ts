@@ -941,6 +941,132 @@ describe("History resume delegation - parent metadata transitions", () => {
 		expect(calls).toEqual(["first", "second"])
 	})
 
+	it("reopenParentFromDelegation posts taskHistoryItemUpdated for both records when view is launched", async () => {
+		const childItem = { id: "c-webview", status: "active" }
+		const parentItem = {
+			id: "p-webview",
+			status: "delegated",
+			awaitingChildId: "c-webview",
+			childIds: [],
+			ts: 100,
+			task: "Parent webview",
+			tokensIn: 0,
+			tokensOut: 0,
+			totalCost: 0,
+		}
+
+		// After atomicUpdatePair resolves, get() returns the merged committed items.
+		const updatedChild = { ...childItem, status: "completed" }
+		const updatedParent = {
+			...parentItem,
+			status: "active",
+			awaitingChildId: undefined,
+			completedByChildId: "c-webview",
+		}
+		const itemMap = new Map<string, any>([
+			["c-webview", updatedChild],
+			["p-webview", updatedParent],
+		])
+		const taskHistoryStore = {
+			atomicUpdatePair: vi.fn(async (_fId: string, _sId: string, fU: (h: any) => any, sU: (h: any) => any) => {
+				fU(childItem)
+				sU(parentItem)
+				return []
+			}),
+			get: vi.fn((id: string) => itemMap.get(id)),
+		}
+
+		const postMessageToWebview = vi.fn().mockResolvedValue(undefined)
+
+		const provider = makeProviderStub({
+			contextProxy: { globalStorageUri: { fsPath: "/tmp" } },
+			getTaskWithId: vi.fn().mockResolvedValue({ historyItem: parentItem }),
+			emit: vi.fn(),
+			isViewLaunched: true,
+			getCurrentTask: vi.fn(() => ({ taskId: "c-webview" })),
+			removeClineFromStack: vi.fn().mockResolvedValue(undefined),
+			createTaskWithHistoryItem: vi.fn().mockResolvedValue({
+				resumeAfterDelegation: vi.fn().mockResolvedValue(undefined),
+				overwriteClineMessages: vi.fn().mockResolvedValue(undefined),
+				overwriteApiConversationHistory: vi.fn().mockResolvedValue(undefined),
+			}),
+			taskHistoryStore,
+			postMessageToWebview,
+		} as any)
+
+		vi.mocked(readTaskMessages).mockResolvedValue([])
+		vi.mocked(readApiMessages).mockResolvedValue([])
+
+		await (ClineProvider.prototype as any).reopenParentFromDelegation.call(provider, {
+			parentTaskId: "p-webview",
+			childTaskId: "c-webview",
+			completionResultSummary: "Done",
+		})
+
+		// Must post taskHistoryItemUpdated for both the child (completed) and parent (active)
+		const webviewCalls = postMessageToWebview.mock.calls.filter((c) => c[0]?.type === "taskHistoryItemUpdated")
+		expect(webviewCalls).toHaveLength(2)
+
+		const childMsg = webviewCalls.find((c) => c[0].taskHistoryItem.id === "c-webview")
+		expect(childMsg?.[0].taskHistoryItem).toMatchObject({ id: "c-webview", status: "completed" })
+
+		const parentMsg = webviewCalls.find((c) => c[0].taskHistoryItem.id === "p-webview")
+		expect(parentMsg?.[0].taskHistoryItem).toMatchObject({ id: "p-webview", status: "active" })
+
+		// Both must be sent after atomicUpdatePair (verified by call order)
+		const atomicOrder = taskHistoryStore.atomicUpdatePair.mock.invocationCallOrder[0]
+		for (const call of webviewCalls) {
+			const msgOrder =
+				postMessageToWebview.mock.invocationCallOrder[postMessageToWebview.mock.calls.indexOf(call)]
+			expect(atomicOrder).toBeLessThan(msgOrder)
+		}
+	})
+
+	it("reopenParentFromDelegation does NOT post taskHistoryItemUpdated when view is not launched", async () => {
+		const childItem = { id: "c-noview", status: "active" }
+		const parentItem = {
+			id: "p-noview",
+			status: "delegated",
+			awaitingChildId: "c-noview",
+			childIds: [],
+			ts: 100,
+			task: "Parent no-view",
+			tokensIn: 0,
+			tokensOut: 0,
+			totalCost: 0,
+		}
+		const taskHistoryStore = makeTaskHistoryStoreStub(childItem, parentItem)
+		const postMessageToWebview = vi.fn().mockResolvedValue(undefined)
+
+		const provider = makeProviderStub({
+			contextProxy: { globalStorageUri: { fsPath: "/tmp" } },
+			getTaskWithId: vi.fn().mockResolvedValue({ historyItem: parentItem }),
+			emit: vi.fn(),
+			isViewLaunched: false,
+			getCurrentTask: vi.fn(() => ({ taskId: "c-noview" })),
+			removeClineFromStack: vi.fn().mockResolvedValue(undefined),
+			createTaskWithHistoryItem: vi.fn().mockResolvedValue({
+				resumeAfterDelegation: vi.fn().mockResolvedValue(undefined),
+				overwriteClineMessages: vi.fn().mockResolvedValue(undefined),
+				overwriteApiConversationHistory: vi.fn().mockResolvedValue(undefined),
+			}),
+			taskHistoryStore,
+			postMessageToWebview,
+		} as any)
+
+		vi.mocked(readTaskMessages).mockResolvedValue([])
+		vi.mocked(readApiMessages).mockResolvedValue([])
+
+		await (ClineProvider.prototype as any).reopenParentFromDelegation.call(provider, {
+			parentTaskId: "p-noview",
+			childTaskId: "c-noview",
+			completionResultSummary: "Done",
+		})
+
+		const webviewCalls = postMessageToWebview.mock.calls.filter((c) => c[0]?.type === "taskHistoryItemUpdated")
+		expect(webviewCalls).toHaveLength(0)
+	})
+
 	describe("atomicUpdatePair handoff correctness", () => {
 		it("after reopenParentFromDelegation, child is completed and parent is active atomically", async () => {
 			const parentItem = {
