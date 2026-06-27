@@ -111,6 +111,12 @@ async function writeInstalledVersion(storageDir: string, version: string): Promi
  * Because the local archive cache path is version-prefixed (see `downloadSemble`),
  * upgrading SEMBLE_VERSION leaves the prior version's archive orphaned on disk.
  * This sweeps those stale packages so a version upgrade doesn't accumulate them.
+ *
+ * Matches both the version-prefixed cache names (`${version}-${archiveName}`,
+ * used since v0.4.0) and the legacy unversioned cache name (`${archiveName}`,
+ * used before v0.4.0), so a v0.3.1 → v0.4.1 upgrade also clears the legacy file.
+ * The current archive path is always preserved.
+ *
  * Errors are swallowed since this is purely cosmetic cleanup.
  */
 async function cleanupStaleArchives(
@@ -123,7 +129,11 @@ async function cleanupStaleArchives(
 		const suffix = `-${archiveName}`
 		await Promise.all(
 			entries
-				.filter((name) => name.endsWith(suffix) && path.join(storageDir, name) !== currentArchivePath)
+				.filter(
+					(name) =>
+						(name === archiveName || name.endsWith(suffix)) &&
+						path.join(storageDir, name) !== currentArchivePath,
+				)
 				.map((name) => fs.unlink(path.join(storageDir, name)).catch(() => {})),
 		)
 	} catch {

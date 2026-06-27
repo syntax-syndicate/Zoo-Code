@@ -395,6 +395,24 @@ describe("SembleProvider", () => {
 			)
 		})
 
+		it("should capture stack only when error is an Error instance", async () => {
+			// A non-Error rejection exercises the `error instanceof Error` false
+			// branch of the telemetry payload (stack: undefined).
+			mockCli.search.mockRejectedValue("string error")
+
+			const results = await provider.searchIndex("test")
+
+			expect(results).toEqual([])
+			expect(TelemetryService.instance.captureEvent).toHaveBeenCalledWith(
+				TelemetryEventName.CODE_INDEX_ERROR,
+				expect.objectContaining({
+					error: "string error",
+					stack: undefined,
+					location: "SembleProvider.searchIndex",
+				}),
+			)
+		})
+
 		it("should return empty array when in Error state", async () => {
 			;(isSembleSupportedPlatform as any).mockReturnValue(false)
 			const errorProvider = new SembleProvider("/workspace", mockContext, mockStateManager)

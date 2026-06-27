@@ -645,6 +645,15 @@ describe("semble-downloader", () => {
 
 			// Old version recorded on disk → must trigger a fresh download
 			;(fs.readFile as any).mockResolvedValue("v0.4.0")
+			// Simulate a prior-version archive (v0.4.0) and a legacy unversioned
+			// archive (pre-v0.4.0 cache layout) left over in the storage dir.
+			// cleanupStaleArchives must sweep both during the upgrade.
+			;(fs.readdir as any).mockResolvedValue([
+				"v0.4.0-semble-linux-x64-fast.tar.gz",
+				"semble-linux-x64-fast.tar.gz",
+				"v0.4.1-semble-linux-x64-fast.tar.gz",
+				"unrelated-file.txt",
+			])
 			// fs.access resolves — only called for staged binary verification
 			;(fs.access as any).mockResolvedValue(undefined)
 
@@ -677,6 +686,15 @@ describe("semble-downloader", () => {
 				// The stale archive is removed before the fresh download to guarantee
 				// a clean package is verified against the new checksum.
 				expect(fs.unlink).toHaveBeenCalledWith(versionedArchive)
+				// The prior-version archive (v0.4.0-*) is swept by cleanupStaleArchives
+				// after a successful install, so a version upgrade doesn't accumulate
+				// orphaned packages on disk.
+				expect(fs.unlink).toHaveBeenCalledWith(path.join("/storage", "v0.4.0-semble-linux-x64-fast.tar.gz"))
+				// The legacy unversioned archive (pre-v0.4.0 cache layout) is also
+				// swept, covering the v0.3.1 → v0.4.1 upgrade path.
+				expect(fs.unlink).toHaveBeenCalledWith(path.join("/storage", "semble-linux-x64-fast.tar.gz"))
+				// Unrelated files in the storage dir must not be touched.
+				expect(fs.unlink).not.toHaveBeenCalledWith(path.join("/storage", "unrelated-file.txt"))
 				// The new version file is recorded
 				expect(fs.writeFile).toHaveBeenCalledWith(
 					path.join("/storage", "semble", ".semble-version"),
@@ -800,6 +818,86 @@ describe("semble-downloader", () => {
 					"v0.4.1",
 					"utf-8",
 				)
+			} finally {
+				if (originalPlatform) Object.defineProperty(process, "platform", originalPlatform)
+				if (originalArch) Object.defineProperty(process, "arch", originalArch)
+			}
+		})
+	})
+
+	describe("downloadSemble - stale archive cleanup", () => {
+		it("should ignore readdir failures during stale-archive cleanup", async () => {
+			const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform")
+			const originalArch = Object.getOwnPropertyDescriptor(process, "arch")
+
+			Object.defineProperty(process, "platform", { value: "linux", configurable: true })
+			Object.defineProperty(process, "arch", { value: "x64", configurable: true })
+
+			// First install (no version file) → triggers a fresh download
+			;(fs.readFile as any).mockRejectedValue(new Error("ENOENT"))
+			;(fs.access as any).mockResolvedValue(undefined)
+			// readdir rejects — exercises the catch block in cleanupStaleArchives
+			;(fs.readdir as any).mockRejectedValue(new Error("EACCES"))
+
+			mockWriteStream.on.mockImplementation((event: string, cb: () => void) => {
+				if (event === "finish") {
+					setImmediate(cb)
+				}
+			})
+
+			try {
+				const result = await downloadSemble("/storage")
+
+				// Should still succeed — cleanup failure is swallowed
+				expect(result).toBe(path.join("/storage", "semble", "semble"))
+				expect(fs.readdir).toHaveBeenCalledWith("/storage")
+			} finally {
+				if (originalPlatform) Object.defineProperty(process, "platform", originalPlatform)
+				if (originalArch) Object.defineProperty(process, "arch", originalArch)
+			}
+		})
+
+		it("should preserve the current archive and unrelated files during cleanup", async () => {
+			const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform")
+			const originalArch = Object.getOwnPropertyDescriptor(process, "arch")
+
+			Object.defineProperty(process, "platform", { value: "linux", configurable: true })
+			Object.defineProperty(process, "arch", { value: "x64", configurable: true })
+
+			// First install (no version file) → triggers a fresh download
+			;(fs.readFile as any).mockRejectedValue(new Error("ENOENT"))
+			;(fs.access as any).mockResolvedValue(undefined)
+			// Storage dir contains the current archive plus unrelated files
+			;(fs.readdir as any).mockResolvedValue([
+				"v0.4.1-semble-linux-x64-fast.tar.gz",
+				"v0.4.0-semble-linux-x64-fast.tar.gz",
+				"semble-linux-x64-fast.tar.gz",
+				"unrelated.txt",
+			])
+
+			mockWriteStream.on.mockImplementation((event: string, cb: () => void) => {
+				if (event === "finish") {
+					setImmediate(cb)
+				}
+			})
+
+			try {
+				await downloadSemble("/storage")
+
+				const currentArchive = path.join("/storage", "v0.4.1-semble-linux-x64-fast.tar.gz")
+				// Stale versioned + legacy unversioned archives are swept
+				expect(fs.unlink).toHaveBeenCalledWith(path.join("/storage", "v0.4.0-semble-linux-x64-fast.tar.gz"))
+				expect(fs.unlink).toHaveBeenCalledWith(path.join("/storage", "semble-linux-x64-fast.tar.gz"))
+				// The current archive is never swept by cleanupStaleArchives (it is
+				// excluded by the currentArchivePath guard). It is unlinked only by
+				// the pre-download partial-archive cleanup and the post-install
+				// archive cleanup steps. unrelated.txt is never touched.
+				expect(fs.unlink).not.toHaveBeenCalledWith(path.join("/storage", "unrelated.txt"))
+				// Sanity: the current archive path is never passed to the stale sweep.
+				// It is unlinked exactly twice (pre-download cleanup + post-install
+				// archive cleanup), never via cleanupStaleArchives.
+				const currentUnlinks = (fs.unlink as any).mock.calls.filter((c: any[]) => c[0] === currentArchive)
+				expect(currentUnlinks.length).toBe(2)
 			} finally {
 				if (originalPlatform) Object.defineProperty(process, "platform", originalPlatform)
 				if (originalArch) Object.defineProperty(process, "arch", originalArch)
